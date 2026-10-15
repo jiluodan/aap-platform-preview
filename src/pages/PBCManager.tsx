@@ -1,5 +1,5 @@
 // PBC Management — Enhanced with filter, batch edit, list view, export, bulk ops, charts
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, Fragment } from 'react'
 import { useLanguage } from '../contexts/LanguageContext'
 import { PBC_CATEGORIES, PBC_ITEM_DEFS } from '../data/pbcCatalog'
 import './PBCManager.css'
@@ -106,6 +106,34 @@ const pbcItems: PBCItem[] = PBC_ITEM_DEFS.map((def, idx) => {
 // 该页签只做一件事：把这些 PBC 文件推送到 Audit File Pool
 const poolCandidates: PBCItem[] = pbcItems.filter(i => i.fileName)
 
+// ===== 未分类 PBC 文件池 =====
+// 项目组已从客户处收到、但尚未匹配到 PBC 清单具体类型的文件。
+// 通过拖拽到清单条目（或点击选中后再点条目）完成匹配。
+interface PoolFile {
+  id: string
+  fileName: string
+  fileSize: string
+  kind: 'xlsx' | 'pdf' | 'docx' | 'csv'
+  /** 来源渠道 */
+  source: string
+  receivedAt: string
+}
+
+const UNCLASSIFIED_FILES: PoolFile[] = [
+  { id: 'uf-01', fileName: '2026Q2_销售明细表.xlsx',        fileSize: '968KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-10' },
+  { id: 'uf-02', fileName: '董事会决议扫描件_20260709.pdf',  fileSize: '1.2MB', kind: 'pdf',  source: '共享盘',   receivedAt: '2026-07-09' },
+  { id: 'uf-03', fileName: '应收账款账龄分析_20260630.xlsx', fileSize: '642KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-08' },
+  { id: 'uf-04', fileName: '银行对账单_招商银行_202606.pdf', fileSize: '2.1MB', kind: 'pdf',  source: '共享盘',   receivedAt: '2026-07-08' },
+  { id: 'uf-05', fileName: '存货盘点表_20260630.xlsx',       fileSize: '418KB', kind: 'xlsx', source: '现场提供', receivedAt: '2026-07-07' },
+  { id: 'uf-06', fileName: '薪资汇总表_202606.xlsx',         fileSize: '306KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-07' },
+  { id: 'uf-07', fileName: '固定资产台账_202606.xlsx',       fileSize: '1.5MB', kind: 'xlsx', source: '共享盘',   receivedAt: '2026-07-06' },
+  { id: 'uf-08', fileName: '增值税申报表_202606.pdf',         fileSize: '764KB', kind: 'pdf',  source: '客户邮件', receivedAt: '2026-07-06' },
+  { id: 'uf-09', fileName: '采购订单明细_2026H1.xlsx',       fileSize: '880KB', kind: 'xlsx', source: '共享盘',   receivedAt: '2026-07-05' },
+  { id: 'uf-10', fileName: '租赁合同_总部办公_扫描.pdf',      fileSize: '3.4MB', kind: 'pdf',  source: '现场提供', receivedAt: '2026-07-04' },
+]
+
+const POOL_FILE_MAP: Record<string, PoolFile> = Object.fromEntries(UNCLASSIFIED_FILES.map(f => [f.id, f]))
+
 // ===== Component =====
 function PBCManager() {
   const { lang } = useLanguage()
@@ -129,6 +157,89 @@ function PBCManager() {
     // 演示：已接收(accepted)的条目默认视为已推送成功
     () => new Set(poolCandidates.filter(i => i.status === 'accepted').map(i => i.id)),
   )
+
+  // ===== 未分类文件 → PBC 清单 匹配（拖拽 / 点击）=====
+  const [poolIds, setPoolIds] = useState<string[]>(() => UNCLASSIFIED_FILES.map(f => f.id))
+  /** 条目 id → 从文件池匹配来的文件 id */
+  const [matches, setMatches] = useState<Record<string, string>>({})
+  /** 匹配成功后条目的状态覆盖（新收到文件 → 待复核） */
+  const [statusOverride, setStatusOverride] = useState<Record<string, PBCStatus>>({})
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
+  const [draggingPoolId, setDraggingPoolId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [poolDropActive, setPoolDropActive] = useState(false)
+  const [pickedPoolId, setPickedPoolId] = useState<string | null>(null)
+  const [flashId, setFlashId] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const toastTimer = useRef<number | null>(null)
+
+  const pool = useMemo(() => UNCLASSIFIED_FILES.filter(f => poolIds.includes(f.id)), [poolIds])
+
+  const showToast = (msg: string) => {
+    setToast(msg)
+    if (toastTimer.current) window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setToast(null), 2600)
+  }
+
+  /** 条目当前生效的文件：优先「从文件池匹配」的文件，其次条目自带文件 */
+  const effFile = (item: PBCItem): { name: string; size?: string; kind: string; fromPool: boolean } | null => {
+    const pid = matches[item.id]
+    const pf = pid ? POOL_FILE_MAP[pid] : undefined
+    if (pf) return { name: pf.fileName, size: pf.fileSize, kind: pf.kind, fromPool: true }
+    if (item.fileName) {
+      return { name: item.fileName, size: item.fileSize, kind: (item.fileName.split('.').pop() || '').toLowerCase(), fromPool: false }
+    }
+    return null
+  }
+
+  const effStatus = (item: PBCItem): PBCStatus => statusOverride[item.id] || item.status
+
+  /** 将文件池中的文件匹配到某个 PBC 条目 */
+  const assignFile = (itemId: string, poolId: string) => {
+    const f = POOL_FILE_MAP[poolId]
+    const item = pbcItems.find(i => i.id === itemId)
+    if (!f || !item) return
+    const prev = matches[itemId]
+    setMatches(m => ({ ...m, [itemId]: poolId }))
+    setPoolIds(ids => {
+      const next = new Set(ids)
+      if (prev && prev !== poolId) next.add(prev) // 替换时把原文件放回池
+      next.delete(poolId)
+      return UNCLASSIFIED_FILES.map(p => p.id).filter(id => next.has(id))
+    })
+    setStatusOverride(s => ({ ...s, [itemId]: 'review' }))
+    setFlashId(itemId)
+    window.setTimeout(() => setFlashId(cur => (cur === itemId ? null : cur)), 1100)
+    showToast(t(`已将「${f.fileName}」匹配到「${resolveDesc(item.description, isZh)}」`,
+                `Matched "${f.fileName}" to "${resolveDesc(item.description, isZh)}"`))
+  }
+
+  /** 取消匹配，把文件放回未分类文件池 */
+  const unassignFile = (itemId: string) => {
+    const pid = matches[itemId]
+    if (!pid) return
+    setMatches(m => { const n = { ...m }; delete n[itemId]; return n })
+    setPoolIds(ids => UNCLASSIFIED_FILES.map(p => p.id).filter(id => id === pid || ids.includes(id)))
+    setStatusOverride(s => { const n = { ...s }; delete n[itemId]; return n })
+    showToast(t('已取消匹配，文件已放回未分类文件池', 'Unmatched — file returned to the pool'))
+  }
+
+  const toggleCat = (key: string) => setCollapsedCats(prev => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    return next
+  })
+
+  /** 勾选 / 取消勾选某个大类下的全部条目 */
+  const toggleCatSelect = (items: PBCItem[]) => {
+    const allSelected = items.every(i => selectedIds.has(i.id))
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allSelected) items.forEach(i => next.delete(i.id))
+      else items.forEach(i => next.add(i.id))
+      return next
+    })
+  }
 
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
@@ -209,6 +320,21 @@ function PBCManager() {
     if (!grouped[item.category]) grouped[item.category] = []
     grouped[item.category].push(item)
   })
+
+  // List 视图树形数据：父级 = 大类，子级 = 该大类下的 PBC 条目（保持目录顺序）
+  const treeData = useMemo(() => {
+    const byCat: Record<string, PBCItem[]> = {}
+    filteredItems.forEach(i => {
+      if (!byCat[i.category]) byCat[i.category] = []
+      byCat[i.category].push(i)
+    })
+    return CATEGORIES
+      .filter(c => byCat[c.key] && byCat[c.key].length > 0)
+      .map(c => ({ cat: c, items: byCat[c.key] }))
+  }, [filteredItems])
+
+  /** 当前筛选结果中「已匹配到文件」的条目数（含新从文件池匹配的） */
+  const matchedItemCount = filteredItems.filter(i => effFile(i)).length
 
   // ===== File Pool 推送统计（Cards / List 两个视图共用）=====
   const poolReadyCount = poolCandidates.filter(i => !isPushed(i.id)).length
@@ -635,7 +761,7 @@ function PBCManager() {
 
       {/* ===== VIEW: List View (category filter on top, full-width table) ===== */}
       {viewMode === 'list' && (
-        <div className="pbc-list-view animate-fade-in">
+        <div className={`pbc-list-view animate-fade-in ${pickedPoolId ? 'is-picking' : ''}`}>
           {/* Category filter bar: horizontal clickable labels */}
           <div className="plv-filter-bar">
             <div className="plvf-head">
@@ -663,8 +789,29 @@ function PBCManager() {
             </div>
           </div>
 
-          {/* Table (full width) */}
-          <main className="plv-main">
+          <div className="plv-split">
+            {/* ===== 左：PBC 管理清单（树形） ===== */}
+            <div className="plv-left">
+              {pickedPoolId && (
+                <div className="plv-pick-banner">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                  <span>{t(`已选中「${POOL_FILE_MAP[pickedPoolId]?.fileName}」：点击左侧条目完成匹配，或直接拖拽`,
+                           `Selected "${POOL_FILE_MAP[pickedPoolId]?.fileName}" — click a checklist row to match`)}</span>
+                  <button onClick={() => setPickedPoolId(null)}>{t('取消', 'Cancel')}</button>
+                </div>
+              )}
+
+              <div className="plv-panel-head">
+                <div className="plvp-title">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00338D" strokeWidth="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+                  <span>{t('PBC 清单', 'PBC Checklist')}</span>
+                  <span className="plvp-badge">{matchedItemCount}/{filteredItems.length} {t('已匹配', 'matched')}</span>
+                </div>
+                <input className="plvp-search" value={filterSearch} onChange={e => setFilterSearch(e.target.value)}
+                  placeholder={t('搜索资料类别...', 'Search checklist...')} />
+              </div>
+
+              <main className="plv-main">
               <div className="plv-table-header">
                 <label className="plv-select-all">
                   <input type="checkbox" checked={selectedIds.size === filteredItems.length && filteredItems.length > 0}
@@ -679,94 +826,249 @@ function PBCManager() {
                 <thead>
                   <tr>
                     <th className="plv-c-check"></th>
-                    <th className="plv-c-id">{t('ID', 'ID')}</th>
-                    <th>{t('描述', 'Description')}</th>
-                    <th className="plv-c-cat">{t('类别', 'Category')}</th>
+                    <th className="plv-c-tree">{t('PBC 清单', 'PBC Checklist')}</th>
+                    <th className="plv-c-file">{t('匹配文件', 'Matched File')}</th>
                     <th className="plv-c-assignee">{t('负责人', 'Assignee')}</th>
                     <th className="plv-c-due">{t('截止日期', 'Due Date')}</th>
                     <th className="plv-c-status">{t('状态', 'Status')}</th>
                     <th className="plv-c-prio">{t('优先级', 'Priority')}</th>
                     <th className="plv-c-dtype">{t('数据类型', 'Data Type')}</th>
-                    <th className="plv-c-file">{t('文件', 'File')}</th>
                     <th className="plv-c-pool">{t('File Pool', 'File Pool')}</th>
                     {/* 占位列：吸收表格富余宽度，避免其余列被撑宽 */}
                     <th className="plv-c-spacer" aria-hidden="true"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredItems.map(item => {
-                    const meta = categoryMetaMap[item.category]
-                    const isSelected = selectedIds.has(item.id)
+                  {treeData.map(({ cat, items }) => {
+                    const collapsed = collapsedCats.has(cat.key)
+                    const matched = items.filter(i => effFile(i)).length
+                    const catSelected = items.every(i => selectedIds.has(i.id))
+                    const dtype = categoryDataType(items)
+                    const dist: Record<PBCStatus, number> = { accepted: 0, review: 0, requested: 0 }
+                    items.forEach(i => { dist[effStatus(i)] += 1 })
                     return (
-                      <tr key={item.id} className={`${isSelected ? 'row-selected' : ''} priority-${item.priority}`}
-                        onClick={() => toggleSelect(item.id)}>
-                        <td><input type="checkbox" checked={isSelected} readOnly /></td>
-                        <td className="plv-id">{item.id}</td>
-                        <td className="plv-desc">{resolveDesc(item.description, isZh)}</td>
-                        <td>
-                          <span className="plv-cat-badge"
-                            title={getCategoryLabel(item.category, isZh)}
-                            style={{
-                              background: meta?.bg || '#f1f5f9',
-                              color: meta?.color || '#64748b',
-                            }}>{getCategoryLabel(item.category, isZh)}</span>
-                        </td>
-                        <td>{item.assignee || item.requestedBy}</td>
-                        <td>{item.dueDate}</td>
-                        <td>
-                          <span className="pbc-status" style={{ background: sc(item.status).bg, color: sc(item.status).color }}>
-                            {sc(item.status).label}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={`priority-dot priority-${item.priority}`}></span>
-                          {item.priority}
-                        </td>
-                        <td>
-                          <span className={`plv-dtype ${item.dataType}`}>
-                            {item.dataType === 'structured' ? t('结构化', 'Str') : t('非结构化', 'Unstr')}
-                          </span>
-                        </td>
-                        <td className="plv-c-file">
-                          {item.fileName ? (
-                            <button
-                              className="plv-file-icon"
-                              title={`${t('打开文件', 'Open file')}：${item.fileName}${item.fileSize ? ` (${item.fileSize})` : ''}`}
-                              aria-label={`${t('打开文件', 'Open file')}：${item.fileName}`}
-                              onClick={e => { e.stopPropagation(); openFile(item.fileName, item.fileSize) }}
-                            >
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                                <polyline points="14 2 14 8 20 8" />
-                              </svg>
-                            </button>
-                          ) : <span className="plv-na">—</span>}
-                        </td>
-                        <td className="plv-c-pool">
-                          {!item.fileName
-                            ? <span className="plv-na">—</span>
-                            : isPushed(item.id)
-                              ? <span className="pp-push-done" title={t('已推送到 File Pool', 'Pushed to File Pool')}>
-                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2"><polyline points="20 6 9 17 4 12"/></svg>
-                                  {t('已推送', 'Pushed')}
+                      <Fragment key={cat.key}>
+                        {/* 大类（父级）行 */}
+                        <tr className="plv-row-cat" onClick={() => toggleCat(cat.key)}>
+                          <td>
+                            <input type="checkbox" checked={catSelected}
+                              onClick={e => e.stopPropagation()}
+                              onChange={() => toggleCatSelect(items)}
+                              ref={el => { if (el) el.indeterminate = !catSelected && items.some(i => selectedIds.has(i.id)) }} />
+                          </td>
+                          <td className="plv-c-tree">
+                            <div className="plv-cat-cell">
+                              <span className={`plv-cat-caret ${collapsed ? 'collapsed' : ''}`}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9" /></svg>
+                              </span>
+                              <span className="plv-cat-icon">{cat.icon}</span>
+                              <span className="plv-cat-name">{isZh ? cat.zh : cat.en}</span>
+                              <span className={`plv-cat-count ${matched === items.length ? 'full' : ''}`}>{matched}/{items.length}</span>
+                            </div>
+                          </td>
+                          <td></td>
+                          <td></td>
+                          <td></td>
+                          <td>
+                            <span className="plv-band-stack"
+                              title={t(`已接收 ${dist.accepted} · 待复核 ${dist.review} · 待提供 ${dist.requested}`,
+                                       `Accepted ${dist.accepted} · In review ${dist.review} · Requested ${dist.requested}`)}>
+                              {dist.accepted > 0 && <i style={{ flexGrow: dist.accepted, background: '#059669' }} />}
+                              {dist.review > 0 && <i style={{ flexGrow: dist.review, background: '#3182CE' }} />}
+                              {dist.requested > 0 && <i style={{ flexGrow: dist.requested, background: '#D69E2E' }} />}
+                            </span>
+                          </td>
+                          <td></td>
+                          <td>
+                            <span className={`plv-dtype ${dtype}`}>
+                              {dtype === 'structured' ? t('结构化', 'Str') : dtype === 'unstructured' ? t('非结构化', 'Unstr') : t('混合', 'Mixed')}
+                            </span>
+                          </td>
+                          <td></td>
+                          <td className="plv-c-spacer" aria-hidden="true"></td>
+                        </tr>
+
+                        {/* 条目（子级）行：可接收右侧文件池的拖拽匹配 */}
+                        {!collapsed && items.map(item => {
+                          const file = effFile(item)
+                          const isSel = selectedIds.has(item.id)
+                          const stt = effStatus(item)
+                          const isDrop = dragOverId === item.id
+                          return (
+                            <tr key={item.id}
+                              className={`plv-row-item ${isSel ? 'row-selected' : ''} priority-${item.priority} ${flashId === item.id ? 'row-flash' : ''} ${isDrop ? 'plv-drop-active' : ''}`}
+                              onClick={() => {
+                                if (pickedPoolId) { assignFile(item.id, pickedPoolId); setPickedPoolId(null) }
+                                else toggleSelect(item.id)
+                              }}
+                              onDragOver={e => {
+                                if (!e.dataTransfer.types.includes('text/plain')) return
+                                e.preventDefault()
+                                if (dragOverId !== item.id) setDragOverId(item.id)
+                              }}
+                              onDragLeave={() => setDragOverId(cur => (cur === item.id ? null : cur))}
+                              onDrop={e => {
+                                const pid = e.dataTransfer.getData('text/plain') || draggingPoolId
+                                if (!pid) return
+                                e.preventDefault()
+                                assignFile(item.id, pid)
+                                setDragOverId(null); setDraggingPoolId(null)
+                              }}>
+                              <td>
+                                <input type="checkbox" checked={isSel}
+                                  onChange={() => toggleSelect(item.id)}
+                                  onClick={e => e.stopPropagation()} />
+                              </td>
+                              <td className="plv-c-tree">
+                                <div className="plv-item-cell">
+                                  <span className="plv-item-name" title={resolveDesc(item.description, isZh)}>
+                                    {resolveDesc(item.description, isZh)}
+                                  </span>
+                                  <span className={`plv-tree-chip ${file ? 'match' : 'pending'}`}>
+                                    {file ? '1/1' : t('待补充', 'Pending')}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="plv-c-file">
+                                {file ? (
+                                  <div className="plv-file-cell">
+                                    <button
+                                      className="plv-file-icon"
+                                      title={`${t('打开文件', 'Open file')}：${file.name}${file.size ? ` (${file.size})` : ''}`}
+                                      aria-label={`${t('打开文件', 'Open file')}：${file.name}`}
+                                      onClick={e => { e.stopPropagation(); openFile(file.name, file.size) }}
+                                    >
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                                        <polyline points="14 2 14 8 20 8" />
+                                      </svg>
+                                    </button>
+                                    <span className="plv-file-name" title={file.name}
+                                      draggable={file.fromPool}
+                                      onDragStart={e => {
+                                        if (!file.fromPool) return
+                                        e.dataTransfer.setData('application/x-pbc-item', item.id)
+                                        e.dataTransfer.effectAllowed = 'move'
+                                      }}>
+                                      {file.name}
+                                    </span>
+                                    {file.fromPool && (
+                                      <button className="plv-file-unlink"
+                                        title={t('取消匹配，放回未分类文件池', 'Unmatch — return to pool')}
+                                        onClick={e => { e.stopPropagation(); unassignFile(item.id) }}>
+                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M9 14l-4-4 4-4"/><path d="M5 10h11a4 4 0 010 8h-1"/></svg>
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="plv-file-empty">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                                    {t('待补充', 'Pending')}
+                                  </span>
+                                )}
+                              </td>
+                              <td>{item.assignee || item.requestedBy}</td>
+                              <td>{item.dueDate}</td>
+                              <td>
+                                <span className="pbc-status" style={{ background: sc(stt).bg, color: sc(stt).color }}>
+                                  {sc(stt).label}
                                 </span>
-                              : <button className="pp-push-btn" onClick={e => { e.stopPropagation(); pushFiles([item.id]) }}
-                                  title={t('推送到 File Pool', 'Push to File Pool')}>
-                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                                  {t('推送', 'Push')}
-                                </button>
-                          }
-                        </td>
-                        <td className="plv-c-spacer" aria-hidden="true"></td>
-                      </tr>
+                              </td>
+                              <td>
+                                <span className={`priority-dot priority-${item.priority}`}></span>
+                                {item.priority}
+                              </td>
+                              <td>
+                                <span className={`plv-dtype ${item.dataType}`}>
+                                  {item.dataType === 'structured' ? t('结构化', 'Str') : t('非结构化', 'Unstr')}
+                                </span>
+                              </td>
+                              <td className="plv-c-pool">
+                                {!file
+                                  ? <span className="plv-na">—</span>
+                                  : isPushed(item.id)
+                                    ? <span className="pp-push-done" title={t('已推送到 File Pool', 'Pushed to File Pool')}>
+                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2"><polyline points="20 6 9 17 4 12"/></svg>
+                                        {t('已推送', 'Pushed')}
+                                      </span>
+                                    : <button className="pp-push-btn" onClick={e => { e.stopPropagation(); pushFiles([item.id]) }}
+                                        title={t('推送到 File Pool', 'Push to File Pool')}>
+                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        {t('推送', 'Push')}
+                                      </button>
+                                }
+                              </td>
+                              <td className="plv-c-spacer" aria-hidden="true"></td>
+                            </tr>
+                          )
+                        })}
+                      </Fragment>
                     )
                   })}
                   {filteredItems.length === 0 && (
-                    <tr><td colSpan={12} className="plv-empty">{t('无匹配的PBC条目', 'No matching PBC items')}</td></tr>
+                    <tr><td colSpan={10} className="plv-empty">{t('无匹配的PBC条目', 'No matching PBC items')}</td></tr>
                   )}
                 </tbody>
               </table>
-          </main>
+              </main>
+            </div>
+
+            {/* ===== 右：未分类 PBC 文件池（拖拽来源） ===== */}
+            <aside className="plv-right">
+              <div className="plv-pool-card">
+                <div className="plv-pool-head">
+                  <div className="plvph-title">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00338D" strokeWidth="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>
+                    <span>{t('未分类文件', 'Unclassified Files')}</span>
+                    <span className="plvph-count">{pool.length}</span>
+                  </div>
+                  <div className="plvph-hint">
+                    {t('项目组已收到、但尚未匹配到类型的 PBC 文件。拖拽到左侧对应类型，或点击文件再点击条目完成匹配。',
+                       'Received PBC files not yet matched to a type. Drag onto a checklist row, or click a file then a row.')}
+                  </div>
+                </div>
+                <div className={`plv-pool ${poolDropActive ? 'drop-active' : ''}`}
+                  onDragOver={e => {
+                    if (draggingPoolId) return
+                    if (!e.dataTransfer.types.includes('application/x-pbc-item')) return
+                    e.preventDefault()
+                    if (!poolDropActive) setPoolDropActive(true)
+                  }}
+                  onDragLeave={() => setPoolDropActive(false)}
+                  onDrop={e => {
+                    e.preventDefault(); setPoolDropActive(false)
+                    const itemId = e.dataTransfer.getData('application/x-pbc-item')
+                    if (itemId) unassignFile(itemId)
+                  }}>
+                  {pool.map(f => (
+                    <div key={f.id}
+                      className={`plv-pool-item ${draggingPoolId === f.id ? 'dragging' : ''} ${pickedPoolId === f.id ? 'picked' : ''}`}
+                      draggable
+                      onDragStart={e => {
+                        e.dataTransfer.setData('text/plain', f.id)
+                        e.dataTransfer.effectAllowed = 'move'
+                        setDraggingPoolId(f.id)
+                        setPickedPoolId(null)
+                      }}
+                      onDragEnd={() => { setDraggingPoolId(null); setDragOverId(null) }}
+                      onClick={() => setPickedPoolId(cur => (cur === f.id ? null : f.id))}>
+                      <span className={`plvi-icon ${f.kind}`}>{f.kind.slice(0, 3).toUpperCase()}</span>
+                      <div className="plvi-main">
+                        <div className="plvi-name" title={f.fileName}>{f.fileName}</div>
+                        <div className="plvi-meta">{f.fileSize} · {f.source} · {f.receivedAt}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {pool.length === 0 && (
+                    <div className="plv-pool-empty">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>
+                      <div>{t('未分类文件已全部匹配', 'All unclassified files matched')}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </aside>
+          </div>
         </div>
       )}
 
@@ -835,6 +1137,9 @@ function PBCManager() {
           </div>
         </>
       )}
+
+      {/* 匹配结果提示 */}
+      {toast && <div className="pbc-toast">{toast}</div>}
     </div>
   )
 }

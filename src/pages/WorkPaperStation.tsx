@@ -50,6 +50,8 @@ interface SubstWpRow {
   sampleCount: number | null
   wpTemplate: string
   workingPaper: string
+  /** 已上传底稿在 cnDocs 中的完整路径（不含文件名时留空）；文件名见 workingPaper */
+  workingPaperPath: string
   /** KCW active screen Status */
   reviewStatus: ReviewStatus
   /** 文档审核状态：由 Actions 列的审核按钮控制 */
@@ -69,7 +71,7 @@ interface SubstWpRow {
 }
 
 /** 表体数据（不含跨模块关联与运行时状态），关联见下方 AUDIT_PROCEDURE_LINKS */
-type SubstWpRowSeed = Omit<SubstWpRow, 'auditProcedure' | 'docReviewStatus' | 'modifiedAfterReview'>
+type SubstWpRowSeed = Omit<SubstWpRow, 'auditProcedure' | 'docReviewStatus' | 'modifiedAfterReview' | 'workingPaperPath'>
 
 // KCW File type — mirrors EngagementHub's KCwFile for cross-page consistency
 interface KcwFileOption {
@@ -153,8 +155,25 @@ const DEFAULT_AUDIT_PROCEDURE: WpAuditProcedure = { typeKey: 'fsr', itemCode: 'F
 // 演示初始值取「Review Completed 的底稿视为已完成文档审核」，其余为待审核。
 const DEMO_MODIFIED_AFTER_REVIEW = new Set<string>(['r01'])
 
+// ===== 已上传底稿的完整路径 =====
+// 演示数据：按文件名维护其在 cnDocs 中的目录（必须在下方 substWpRows 之前声明）
+const DEMO_WP_FOLDER: Record<string, string> = {
+  'Indep_WP.docx': 'cnDocs/02 Fieldwork/Independence',
+  'FS_Close.xlsx': 'cnDocs/02 Fieldwork/Financial Statement Close',
+  'AR_Circ.xlsx': 'cnDocs/02 Fieldwork/Trade Receivables',
+  'Vendor_Conf.xlsx': 'cnDocs/02 Fieldwork/Procurement',
+  'Inv_WP.xlsx': 'cnDocs/02 Fieldwork/Inventory',
+  'COS_RF.xlsx': 'cnDocs/02 Fieldwork/Cost of Sales',
+  'FA_Tag.xlsx': 'cnDocs/02 Fieldwork/PPE',
+  'Tax_Prov.xlsx': 'cnDocs/02 Fieldwork/Tax',
+  'Payroll.xlsx': 'cnDocs/02 Fieldwork/Payroll',
+  'Fees_WP.xlsx': 'cnDocs/02 Fieldwork/Independence',
+  'Bank_Conf.xlsx': 'cnDocs/02 Fieldwork/Bank',
+}
+
 const substWpRows: SubstWpRow[] = substWpRowSeeds.map(seed => ({
   ...seed,
+  workingPaperPath: buildWpPath(seed.workingPaper, DEMO_WP_FOLDER[seed.workingPaper]),
   auditProcedure: AUDIT_PROCEDURE_LINKS[seed.id] ?? DEFAULT_AUDIT_PROCEDURE,
   docReviewStatus: seed.reviewStatus === 'Review Completed' ? 'Reviewed' : 'Pending review',
   modifiedAfterReview: DEMO_MODIFIED_AFTER_REVIEW.has(seed.id),
@@ -667,6 +686,18 @@ function downloadWorkingPaper(fileName: string) {
   URL.revokeObjectURL(url)
 }
 
+/** 拼接底稿完整路径：有目录则「目录/文件名」，否则落在 cnDocs 根下 */
+function buildWpPath(fileName: string, dir?: string) {
+  if (!fileName) return ''
+  return dir ? `${dir}/${fileName}` : `cnDocs/${fileName}`
+}
+
+/** 取完整路径中的目录部分（含结尾斜杠），用于把路径与文件名分开排版 */
+function wpDirOf(fullPath: string) {
+  const i = fullPath.lastIndexOf('/')
+  return i >= 0 ? fullPath.slice(0, i + 1) : ''
+}
+
 // ===== 上传弹窗：「文件已在 Engagement 的 cnDocs 中」用的演示目录树 =====
 interface CnDocsNode {
   id: string
@@ -734,6 +765,19 @@ const CNDOCS_TREE: CnDocsNode[] = [
     ],
   },
 ]
+
+/** 在 cnDocs 树中定位节点，返回从根到该节点的名称链（最后一项是文件名） */
+function findCnDocsTrail(nodes: CnDocsNode[], id: string, trail: string[] = []): string[] | null {
+  for (const node of nodes) {
+    const next = [...trail, node.name]
+    if (node.id === id) return next
+    if (node.children) {
+      const found = findCnDocsTrail(node.children, id, next)
+      if (found) return found
+    }
+  }
+  return null
+}
 
 /** cnDocs 目录树：文件夹可展开，文件可被选中作为上传来源 */
 function CnDocsTree({
@@ -886,6 +930,8 @@ export function WorkPaperStationView({
   const [uploadApproach, setUploadApproach] = useState<'' | 'device' | 'cndocs'>('')
   /** 待提交的文件名：来自本机选择或 cnDocs 选中 */
   const [uploadFileName, setUploadFileName] = useState('')
+  /** 待提交文件的完整路径（写入 workingPaperPath） */
+  const [uploadPath, setUploadPath] = useState('')
   const [dragActive, setDragActive] = useState(false)
   const [expandedFolders, setExpandedFolders] = useState<string[]>([])
   const [pickedCnDocId, setPickedCnDocId] = useState<string | null>(null)
@@ -956,6 +1002,7 @@ export function WorkPaperStationView({
     setUploadRowId(rowId)
     setUploadApproach('')
     setUploadFileName('')
+    setUploadPath('')
     setDragActive(false)
     setExpandedFolders([])
     setPickedCnDocId(null)
@@ -970,6 +1017,7 @@ export function WorkPaperStationView({
   const handleApproachChange = (approach: 'device' | 'cndocs') => {
     setUploadApproach(approach)
     setUploadFileName('')
+    setUploadPath('')
     setPickedCnDocId(null)
   }
 
@@ -977,7 +1025,10 @@ export function WorkPaperStationView({
   const handlePickLocalFile = () => fileInputRef.current?.click()
 
   const acceptLocalFile = (file: File | undefined) => {
-    if (file) setUploadFileName(file.name)
+    if (!file) return
+    setUploadFileName(file.name)
+    // 本机文件上传后统一落到 engagement 的 cnDocs 根目录下
+    setUploadPath(buildWpPath(file.name))
   }
 
   const handleWorkingPaperSelected = (e: ChangeEvent<HTMLInputElement>) => {
@@ -998,17 +1049,22 @@ export function WorkPaperStationView({
   const handleSelectCnDoc = (node: CnDocsNode) => {
     setPickedCnDocId(node.id)
     setUploadFileName(node.name)
+    // 完整路径 = cnDocs + 目录链路（链路末项即文件名）
+    const trail = findCnDocsTrail(CNDOCS_TREE, node.id) ?? [node.name]
+    setUploadPath(`cnDocs/${trail.join('/')}`)
   }
 
   const handleSubmitUpload = () => {
     if (!uploadRowId || !uploadFileName.trim()) return
     const rowId = uploadRowId
     const fileName = uploadFileName.trim()
+    const fullPath = uploadPath.trim() || buildWpPath(fileName)
     // 文档若已审核，则上传新版本视为「审核后被修改」；审核之前的修改不记录
     setS2Data(rows => rows.map(r => (r.id === rowId
       ? {
           ...r,
           workingPaper: fileName,
+          workingPaperPath: fullPath,
           modifiedAfterReview: r.modifiedAfterReview || r.docReviewStatus === 'Reviewed',
         }
       : r)))
@@ -1029,6 +1085,7 @@ export function WorkPaperStationView({
       ? {
           ...r,
           workingPaper: '',
+          workingPaperPath: '',
           modifiedAfterReview: r.modifiedAfterReview || r.docReviewStatus === 'Reviewed',
         }
       : r)))
@@ -1261,14 +1318,17 @@ export function WorkPaperStationView({
                       <td>
                         {row.workingPaper ? (
                           <span className="wps-file-link" data-kind={fileKind(row.workingPaper)}>
-                            {/* 文件名本身即链接：点击打开底稿 */}
+                            {/* 已上传：展示完整路径（目录弱化 + 文件名链接），点击打开底稿 */}
                             <button
                               type="button"
                               className="wps-file-open"
-                              title={c.openWpTitle(row.workingPaper)}
+                              title={row.workingPaperPath || c.openWpTitle(row.workingPaper)}
                               onClick={() => downloadWorkingPaper(row.workingPaper)}
                             >
                               <span className="wps-file-icon"><FileTypeIcon name={row.workingPaper} /></span>
+                              {row.workingPaperPath && (
+                                <span className="wps-file-dir">{wpDirOf(row.workingPaperPath)}</span>
+                              )}
                               <span className="wps-file-name">{row.workingPaper}</span>
                             </button>
                             <button

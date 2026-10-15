@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<title>AAP · Feature Walkthrough</title>
+<style>
+  :root { --cyan:#38bdf8; --blue:#1d4ed8; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#03060e;
+    font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif; -webkit-font-smoothing:antialiased; }
+  .mono { font-family:"Consolas","SFMono-Regular",ui-monospace,monospace; }
+
+  #stage { position:absolute; inset:0; z-index:1; background:#03060e; }
+
+  /* 场景容器 + 多变镜头转场 */
+  .scene { position:absolute; inset:0; will-change:transform,opacity,filter,clip-path;
+    animation:zinEnter .62s cubic-bezier(.2,.7,.3,1) both; }
+  .scene.exit { animation:zinExit .46s ease-in forwards; }
+
+  /* 推近：镜头向画面内推进 */
+  @keyframes zinEnter { from { opacity:0; transform:scale(.72); filter:blur(16px); } to { opacity:1; transform:none; filter:none; } }
+  @keyframes zinExit  { from { opacity:1; transform:none; filter:none; } to { opacity:0; transform:scale(1.32); filter:blur(16px); } }
+  /* 拉远：镜头后退露出全貌 */
+  @keyframes zoutEnter { from { opacity:0; transform:scale(1.32); filter:blur(16px); } to { opacity:1; transform:none; filter:none; } }
+  @keyframes zoutExit  { from { opacity:1; transform:none; filter:none; } to { opacity:0; transform:scale(.72); filter:blur(16px); } }
+  /* 从右侧平移切入 */
+  @keyframes srEnter { from { opacity:0; transform:translateX(82px) scale(.97); } to { opacity:1; transform:none; } }
+  @keyframes srExit  { from { opacity:1; transform:none; } to { opacity:0; transform:translateX(-82px) scale(.98); filter:blur(4px); } }
+  /* 从左侧平移切入 */
+  @keyframes slEnter { from { opacity:0; transform:translateX(-82px) scale(.97); } to { opacity:1; transform:none; } }
+  @keyframes slExit  { from { opacity:1; transform:none; } to { opacity:0; transform:translateX(82px) scale(.98); filter:blur(4px); } }
+  /* 从下方平移切入 */
+  @keyframes suEnter { from { opacity:0; transform:translateY(74px) scale(.98); } to { opacity:1; transform:none; } }
+  @keyframes suExit  { from { opacity:1; transform:none; } to { opacity:0; transform:translateY(-74px) scale(.98); filter:blur(4px); } }
+  /* 圆形扫描展开 */
+  @keyframes irisEnter { from { opacity:.12; clip-path:circle(0% at 50% 50%); } to { opacity:1; clip-path:circle(150% at 50% 50%); } }
+  @keyframes irisExit  { from { opacity:1; clip-path:circle(150% at 50% 50%); } to { opacity:.12; clip-path:circle(0% at 50% 50%); } }
+  /* 3D 翻转切入 */
+  @keyframes flipEnter { from { opacity:0; transform:perspective(1400px) rotateY(-34deg) scale(.95); } to { opacity:1; transform:perspective(1400px) rotateY(0) scale(1); } }
+  @keyframes flipExit  { from { opacity:1; transform:perspective(1400px) rotateY(0) scale(1); } to { opacity:0; transform:perspective(1400px) rotateY(34deg) scale(.95); } }
+
+  .scene.zoomIn  { animation:zinEnter .6s cubic-bezier(.2,.7,.3,1) both; }
+  .scene.zoomIn.exit  { animation:zinExit .46s ease-in forwards; }
+  .scene.zoomOut { animation:zoutEnter .6s cubic-bezier(.2,.7,.3,1) both; }
+  .scene.zoomOut.exit { animation:zoutExit .46s ease-in forwards; }
+  .scene.slideR  { animation:srEnter .58s cubic-bezier(.2,.7,.3,1) both; }
+  .scene.slideR.exit  { animation:srExit .44s ease-in forwards; }
+  .scene.slideL  { animation:slEnter .58s cubic-bezier(.2,.7,.3,1) both; }
+  .scene.slideL.exit  { animation:slExit .44s ease-in forwards; }
+  .scene.slideUp { animation:suEnter .58s cubic-bezier(.2,.7,.3,1) both; }
+  .scene.slideUp.exit { animation:suExit .44s ease-in forwards; }
+  .scene.iris    { animation:irisEnter .6s ease both; }
+  .scene.iris.exit    { animation:irisExit .42s ease-in forwards; }
+  .scene.flip    { animation:flipEnter .62s cubic-bezier(.2,.7,.3,1) both; }
+  .scene.flip.exit    { animation:flipExit .46s ease-in forwards; }
+
+  /* 顶部进度条 */
+  #bar { position:absolute; top:0; left:0; height:4px; width:0; z-index:55;
+    background:linear-gradient(90deg,#1d4ed8,#38bdf8,#22d3ee); box-shadow:0 0 16px rgba(56,189,248,.7); }
+
+  /* 画面质感叠层（位于截图之上、HUD/字幕之下） */
+  .scanlines { position:absolute; inset:0; z-index:11; pointer-events:none; opacity:.5;
+    background:repeating-linear-gradient(to bottom, rgba(255,255,255,.035) 0 1px, transparent 1px 3px); }
+  .vignette { position:absolute; inset:0; z-index:11; pointer-events:none;
+    background:radial-gradient(120% 120% at 50% 45%, transparent 58%, rgba(3,6,14,.5) 100%); }
+  #wipe { position:absolute; inset:0; z-index:60; pointer-events:none; opacity:0;
+    background:linear-gradient(100deg, transparent 30%, rgba(125,211,252,.0) 38%, rgba(125,211,252,.55) 50%, rgba(56,189,248,.0) 62%, transparent 70%); }
+  #wipe.go { animation:wipe .6s ease-in-out; }
+  @keyframes wipe { 0% { transform:translateX(-40%); opacity:0; } 14% { opacity:1; } 100% { transform:translateX(140%); opacity:0; } }
+
+  /* ===== 图片场景 ===== */
+  .shotwrap { position:absolute; inset:0; overflow:hidden; background:#03060e; }
+  .shot { position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    transform-origin:var(--fx,50%) var(--fy,50%); will-change:transform;
+    animation:kb linear forwards; }
+  @keyframes kb {
+    from { transform: scale(var(--z0,1)) translate(var(--tx0,0px), var(--ty0,0px)); }
+    to   { transform: scale(var(--z1,1.09)) translate(var(--tx1,0px), var(--ty1,0px)); }
+  }
+
+  /* HUD 取景框 */
+  .hud { position:absolute; inset:0; z-index:12; pointer-events:none; }
+  .hud .frame { position:absolute; inset:16px; border:1px solid rgba(125,211,252,.16); border-radius:7px; }
+  .hud .frame::after { content:""; position:absolute; inset:0; border-radius:7px; box-shadow:inset 0 0 60px rgba(56,189,248,.10); }
+  .corner { position:absolute; width:28px; height:28px; border:2px solid var(--cyan);
+    box-shadow:0 0 14px rgba(56,189,248,.6); animation:corners .7s ease both; }
+  .corner.tl { top:16px; left:16px; border-right:0; border-bottom:0; border-top-left-radius:7px; }
+  .corner.tr { top:16px; right:16px; border-left:0; border-bottom:0; border-top-right-radius:7px; }
+  .corner.bl { bottom:16px; left:16px; border-right:0; border-top:0; border-bottom-left-radius:7px; }
+  .corner.br { bottom:16px; right:16px; border-left:0; border-top:0; border-bottom-right-radius:7px; }
+  @keyframes corners { from { opacity:0; transform:scale(.4); } to { opacity:1; transform:none; } }
+
+  /* 扫描光束 */
+  .scan { position:absolute; left:0; right:0; top:-160px; height:150px; z-index:13; pointer-events:none; opacity:.55;
+    background:linear-gradient(to bottom, rgba(56,189,248,0) 0%, rgba(56,189,248,.07) 66%, rgba(125,211,252,.30) 94%, rgba(255,255,255,.55) 100%);
+    animation:scanmove 7s linear infinite; }
+  @keyframes scanmove { from { transform:translateY(0); } to { transform:translateY(1080px); } }
+
+  /* 要素高亮框 */
+  .hot { position:absolute; z-index:14; border:1.5px solid var(--cyan); border-radius:9px;
+    animation:hotin .7s ease both, hotpulse 2.1s ease-in-out .5s infinite; }
+  .hot .tag { position:absolute; top:-12px; left:12px; background:#07223a; border:1px solid var(--cyan); color:#9bdcff;
+    font-size:13px; font-weight:700; padding:2px 10px; border-radius:6px; white-space:nowrap; letter-spacing:.3px;
+    box-shadow:0 0 14px rgba(56,189,248,.35); }
+  @keyframes hotin { from { opacity:0; transform:scale(1.05); } to { opacity:1; transform:none; } }
+  @keyframes hotpulse {
+    0%,100% { box-shadow:0 0 0 1px rgba(56,189,248,.22), 0 0 18px rgba(56,189,248,.30) inset, 0 0 14px rgba(56,189,248,.28); }
+    50%     { box-shadow:0 0 0 1px rgba(56,189,248,.50), 0 0 30px rgba(56,189,248,.55) inset, 0 0 24px rgba(56,189,248,.5); }
+  }
+
+  .scrim { position:absolute; left:0; right:0; bottom:0; height:52%;
+    background:linear-gradient(to top, rgba(3,6,14,.99) 0%, rgba(3,6,14,.96) 42%, rgba(3,6,14,.55) 68%, rgba(3,6,14,0) 100%); }
+
+  /* 字幕 */
+  .cap { position:absolute; left:0; right:0; bottom:0; padding:0 70px 52px; z-index:20; }
+  .idx { color:#7dd3fc; font-size:13px; letter-spacing:3px; margin-bottom:10px; opacity:.9; }
+  .barwrap { display:flex; align-items:flex-start; gap:15px; }
+  .accent { width:5px; align-self:stretch; min-height:46px; border-radius:3px;
+    background:linear-gradient(180deg,#38bdf8,#1d4ed8); box-shadow:0 0 12px rgba(56,189,248,.6); }
+  .cap-zh { font-size:37px; font-weight:800; color:#fff; letter-spacing:.5px; text-shadow:0 2px 20px rgba(0,0,0,.5); }
+  .cap-en { font-size:20px; font-weight:600; color:#7dd3fc; margin-top:5px; letter-spacing:.4px; }
+  .underline { height:2px; width:0; margin-top:11px; max-width:420px;
+    background:linear-gradient(90deg,#38bdf8,transparent); animation:underline 1s ease .35s forwards; }
+  @keyframes underline { to { width:100%; } }
+  .cap-dz { font-size:18px; color:#d3e3ff; margin-top:13px; }
+  .cap-de { font-size:14px; color:#8ea8cc; margin-top:3px; }
+
+  .badge { position:absolute; top:30px; left:62px; z-index:20; display:flex; align-items:center; gap:9px;
+    padding:8px 15px; border-radius:999px; background:rgba(7,18,36,.66); border:1px solid rgba(125,211,252,.3);
+    color:#cfe6ff; font-size:14px; font-weight:700; letter-spacing:.6px; backdrop-filter:blur(6px); }
+  .badge .sq { width:7px; height:7px; border-radius:2px; background:var(--cyan); box-shadow:0 0 9px var(--cyan); }
+  .wm { position:absolute; bottom:42px; right:70px; z-index:20; color:rgba(125,211,252,.85);
+    font-size:13px; font-weight:600; letter-spacing:1.4px; }
+  .wm .dot { color:var(--cyan); animation:blink 1.5s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:.15; } }
+
+  /* ===== 片头 / 片尾 ===== */
+  .intro, .outro { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center;
+    padding:0 120px; overflow:hidden; }
+  .grid { position:absolute; inset:0; z-index:0; pointer-events:none;
+    background-image:linear-gradient(rgba(56,189,248,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(56,189,248,.07) 1px, transparent 1px);
+    background-size:46px 46px; -webkit-mask-image:radial-gradient(120% 90% at 50% 40%, #000 35%, transparent 85%);
+    mask-image:radial-gradient(120% 90% at 50% 40%, #000 35%, transparent 85%); }
+  .intro { background:radial-gradient(1200px 740px at 24% 14%, #0c2a52 0%, #061226 46%, #03060e 100%); }
+  .outro { background:radial-gradient(1000px 620px at 76% 82%, #0b2a52 0%, #061226 52%, #03060e 100%);
+    align-items:center; text-align:center; }
+  .logo { display:flex; align-items:center; gap:15px; margin-bottom:34px; z-index:1; }
+  .mark { width:54px; height:54px; border-radius:14px; background:linear-gradient(135deg,#1d4ed8,#22d3ee);
+    display:flex; align-items:center; justify-content:center; color:#fff; font-weight:900; font-size:20px;
+    box-shadow:0 10px 30px rgba(34,211,238,.35); }
+  .logo span { color:#9ec5ff; font-size:17px; letter-spacing:3.5px; font-weight:700; }
+  .intro h1 { font-size:66px; color:#fff; line-height:1.1; font-weight:800; z-index:1; position:relative; }
+  .intro h1 em { font-style:normal; color:#38bdf8; text-shadow:0 0 26px rgba(56,189,248,.5); }
+  .intro h1::after { content:""; position:absolute; inset:-6px -10px; z-index:-1;
+    background:linear-gradient(90deg, rgba(56,189,248,.20), transparent 62%); transform:scaleX(0); transform-origin:left;
+    animation:titleSweep 1.1s ease .25s forwards; }
+  @keyframes titleSweep { to { transform:scaleX(1); } }
+  .intro h2 { font-size:26px; color:#a8c6f0; margin-top:16px; font-weight:500; z-index:1; }
+  .rule { width:130px; height:6px; border-radius:3px; margin:32px 0;
+    background:linear-gradient(90deg,#1d4ed8,#22d3ee); box-shadow:0 0 18px rgba(56,189,248,.5); z-index:1; }
+  .outro .rule { margin:26px 0; }
+  .tag { font-size:20px; color:#7dd3fc; font-weight:700; letter-spacing:.4px; z-index:1; }
+  .boot { margin-top:14px; font-size:13px; color:#5f7fa6; letter-spacing:1px; z-index:1; }
+  .outro h1 { font-size:52px; color:#fff; font-weight:800; z-index:1; }
+  .outro p { font-size:20px; color:#9ec5ff; z-index:1; }
+  .outro .en { font-size:15px; color:#7f9dc4; margin-top:10px; letter-spacing:.4px; z-index:1; }
+
+  .fade { opacity:0; animation:fadeUp .8s cubic-bezier(.22,.61,.36,1) forwards; }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:none; } }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="bar"></div>
+<div id="wipe"></div>
+<script>
+  const SCENES = [
+    { t:'intro', dur:4000 },
+
+    { t:'img', src:'01_home.png', dur:5000, trans:'slideR', fx:50, fy:42, z:1.09, tx:-10, ty:-6,
+      zh:'首页 · 客户总览', en:'Home · Client Overview',
+      dz:'集中查看客户、项目组合与风险 / 合规入口', de:'Clients, engagements and risk & compliance entry points at a glance' },
+
+    { t:'img', src:'02_engagement.png', dur:5000, trans:'zoomIn', fx:50, fy:40, z:1.10, tx:10, ty:-6,
+      hot:{ x:8, y:35, w:85, h:33, label:'四大模块入口' },
+      zh:'项目工作台', en:'Engagement Hub',
+      dz:'四大模块入口，以及 Opinion 与 KCW 文件档案总览', de:'Four module entries plus the Opinion & KCW file dashboard' },
+
+    { t:'img', src:'03_opinion.png', dur:4400, trans:'slideUp', fx:50, fy:45, z:1.09, tx:-8, ty:5,
+      zh:'审计意见档案', en:'Opinion Profile',
+      dz:'意见阶段流转、待办事项与关联 KCW 文件', de:'Phase tracking, pending actions and linked KCW files' },
+
+    { t:'img', src:'04_kcw.png', dur:4400, trans:'slideL', fx:50, fy:45, z:1.09, tx:8, ty:-5,
+      zh:'KCW 关键底稿文件', en:'KCW File',
+      dz:'完成度、关联意见档案与工作底稿模板', de:'Completion status, linked opinions and work paper templates' },
+
+    { t:'img', src:'05_pbc.png', dur:4400, trans:'zoomOut', kb:'out', fx:50, fy:45, z:1.12, tx:-8, ty:5,
+      zh:'PBC 客户资料管理', en:'PBC Management',
+      dz:'资料收集、分类、进度跟踪与推送催办', de:'Collection, categorisation, tracking and push follow-ups' },
+
+    { t:'img', src:'06_data.png', dur:4400, trans:'flip', fx:50, fy:45, z:1.09, tx:8, ty:5,
+      zh:'数据处理引擎', en:'Data Processing Engine',
+      dz:'多源数据结构化、清洗与字段映射', de:'Structured data from multiple sources with cleaning and mapping' },
+
+    { t:'img', src:'07_procedures.png', dur:4400, trans:'slideR', fx:50, fy:45, z:1.09, tx:-8, ty:-5,
+      zh:'审计程序', en:'Audit Procedures',
+      dz:'程序卡片化编排，覆盖全部审计程序类型', de:'Procedure execution by type, organised into cards' },
+
+    { t:'img', src:'08_workpapers.png', dur:6000, trans:'zoomIn', fx:52, fy:36, z:1.10, tx:-6, ty:-4,
+      hot:{ x:4, y:19, w:95, h:17, label:'底稿 KPI 指标' },
+      zh:'工作底稿站', en:'Work Paper Station',
+      dz:'底稿 KPI 完成度与标准化底稿模板匹配', de:'Work paper KPIs and standardised template matching' },
+
+    { t:'img', src:'09_wp_table.png', dur:5000, trans:'slideUp', fx:74, fy:52, z:1.12, tx:-10, ty:-4,
+      hot:{ x:66, y:33, w:32, h:50, label:'审核状态 · Doc Review' },
+      zh:'底稿清单 · 上传与审核状态', en:'Work Paper List · Upload & Review Status',
+      dz:'完整 cnDocs 路径、Doc Review Status 与 Modified after review', de:'Full cnDocs path, doc review status and modified-after-review flags' },
+
+    { t:'img', src:'11_upload_device.png', dur:5000, trans:'slideL', fx:50, fy:52, z:1.10, tx:0, ty:-4,
+      hot:{ x:24, y:38, w:52, h:31, label:'拖拽 / 点击上传' },
+      zh:'底稿上传 · 统一文件池', en:'Upload Work Paper · Unified File Pool',
+      dz:'方式一：从本机拖拽或点击上传', de:'Option 1 — drag & drop or click to upload from your device' },
+
+    { t:'img', src:'12_upload_cndocs.png', dur:5000, trans:'iris', fx:34, fy:50, z:1.11, tx:10, ty:-4,
+      hot:{ x:14, y:22, w:44, h:58, label:'cnDocs 目录树' },
+      zh:'上传方式二 · cnDocs 选取', en:'Upload from cnDocs',
+      dz:'直接选取 Engagement 的 cnDocs 中已有文件', de:'Pick a file already stored in the engagement\'s cnDocs' },
+
+    { t:'outro', dur:3500 },
+  ];
+
+  const IMG_SCENES = SCENES.filter(s => s.t === 'img');
+  const TOTAL = SCENES.reduce((a, s) => a + s.dur, 0);
+  let acc = 0;
+  SCENES.forEach(s => { s._start = acc; acc += s.dur; });
+
+  const stage = document.getElementById('stage');
+  const bar = document.getElementById('bar');
+  const wipe = document.getElementById('wipe');
+
+  function hotMarkup(h) {
+    if (!h) return '';
+    return `<div class="hot" style="left:${h.x}%;top:${h.y}%;width:${h.w}%;height:${h.h}%;">
+      <div class="tag">${h.label}</div></div>`;
+  }
+
+  function imageScene(s, imgIndex) {
+    const num = String(imgIndex + 1).padStart(2, '0');
+    const cnt = String(IMG_SCENES.length).padStart(2, '0');
+    const Z = s.z || 1.09, TX = s.tx || 0, TY = s.ty || 0;
+    const out = s.kb === 'out';
+    const z0 = out ? Z : 1, z1 = out ? 1 : Z;
+    const tx0 = out ? TX : 0, tx1 = out ? 0 : TX;
+    const ty0 = out ? TY : 0, ty1 = out ? 0 : TY;
+    return `
+      <div class="scene ${s.trans || ''}">
+        <div class="shotwrap">
+          <img class="shot kb" src="${s.src}" alt="" style="--fx:${s.fx}%;--fy:${s.fy}%;--z0:${z0};--z1:${z1};--tx0:${tx0}px;--tx1:${tx1}px;--ty0:${ty0}px;--ty1:${ty1}px;animation-duration:${s.dur}ms" />
+        </div>
+        <div class="scanlines"></div>
+        <div class="vignette"></div>
+        <div class="hud">
+          <div class="frame"></div>
+          <div class="corner tl"></div><div class="corner tr"></div>
+          <div class="corner bl"></div><div class="corner br"></div>
+        </div>
+        <div class="scan"></div>
+        ${hotMarkup(s.hot)}
+        <div class="scrim"></div>
+        <div class="badge"><span class="sq"></span>${num} / ${cnt}</div>
+        <div class="wm mono"><span class="dot">▍</span> AAP // SYS ONLINE</div>
+        <div class="cap">
+          <div class="idx mono fade" style="animation-delay:.05s">// SCENE ${num}</div>
+          <div class="barwrap">
+            <div class="accent"></div>
+            <div>
+              <div class="cap-zh fade" style="animation-delay:.12s">${s.zh}</div>
+              <div class="cap-en fade" style="animation-delay:.2s">${s.en}</div>
+              <div class="underline"></div>
+              <div class="cap-dz fade" style="animation-delay:.3s">${s.dz}</div>
+              <div class="cap-de fade" style="animation-delay:.36s">${s.de}</div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function introScene() {
+    return `
+      <div class="scene zoomIn">
+        <div class="intro">
+          <div class="grid"></div>
+          <div class="logo fade" style="animation-delay:.05s">
+            <div class="mark">AAP</div><span>AUDIT APPLICATION PLATFORM</span>
+          </div>
+          <h1 class="fade" style="animation-delay:.2s">审计应用<em>平台</em></h1>
+          <h2 class="fade" style="animation-delay:.34s">从客户、项目到工作底稿的一体化审计作业平台</h2>
+          <div class="rule fade" style="animation-delay:.46s"></div>
+          <div class="tag fade" style="animation-delay:.56s">核心功能 · 快速走查</div>
+          <div class="boot mono fade" style="animation-delay:.7s">> initializing audit workspace ...</div>
+        </div>
+      </div>`;
+  }
+
+  function outroScene() {
+    return `
+      <div class="scene zoomOut">
+        <div class="outro">
+          <div class="grid"></div>
+          <h1 class="fade" style="animation-delay:.05s">谢谢观看</h1>
+          <div class="rule fade" style="animation-delay:.2s"></div>
+          <p class="fade" style="animation-delay:.32s">Audit Application Platform (AAP)</p>
+          <div class="en mono fade" style="animation-delay:.42s">THANK YOU FOR WATCHING</div>
+        </div>
+      </div>`;
+  }
+
+  let idx = 0;
+  let imgIndex = -1;
+
+  function play() {
+    if (idx >= SCENES.length) return;
+    const s = SCENES[idx];
+
+    if (s.t === 'img') { imgIndex++; stage.innerHTML = imageScene(s, imgIndex); }
+    else if (s.t === 'intro') { stage.innerHTML = introScene(); }
+    else { stage.innerHTML = outroScene(); }
+
+    // 科技感数据擦除线（圆形扫描 / 翻转类转场自带标志动作，不再叠加）
+    if (!['iris','flip'].includes(s.trans)) {
+      wipe.classList.remove('go'); void wipe.offsetWidth; wipe.classList.add('go');
+    }
+
+    // 顶部进度条按当前场景时长推进
+    bar.style.transition = 'none';
+    bar.style.width = (s._start / TOTAL * 100) + '%';
+    void bar.offsetWidth;
+    bar.style.transition = `width ${s.dur}ms linear`;
+    bar.style.width = ((s._start + s.dur) / TOTAL * 100) + '%';
+
+    // 场景结束前触发退场转场
+    if (idx < SCENES.length - 1) {
+      setTimeout(() => {
+        const sc = stage.querySelector('.scene');
+        if (sc) sc.classList.add('exit');
+      }, Math.max(0, s.dur - 480));
+    }
+
+    idx++;
+    setTimeout(play, s.dur);
+  }
+
+  // 预加载全部截图，避免首帧空白
+  Promise.all(IMG_SCENES.map(s => new Promise(res => {
+    const im = new Image();
+    im.onload = im.onerror = () => res();
+    im.src = s.src;
+  }))).then(() => setTimeout(play, 150));
+</script>
+</body>
+</html>

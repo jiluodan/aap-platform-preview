@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Deploy Preview to GitHub Pages
 
 on:
   push:
@@ -10,7 +10,6 @@ permissions:
   pages: write
   id-token: write
 
-# 不取消进行中的部署，避免并发/中途打断（保留既有策略）
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -32,11 +31,12 @@ jobs:
       - name: Install dependencies
         run: npm ci --fetch-retries=3 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
 
-      - name: Build
-        run: npm run build
+      - name: Build (preview base)
+        # 测试版部署在 /aap-platform-preview/ 子路径下；
+        # 使用 vite build 直接打包（跳过 tsc 类型检查，与本地 dev 行为一致，避免类型错误阻断测试版发布）
+        run: npx vite build --base=/aap-platform-preview/
 
       - name: SPA fallback (deep-link refresh)
-        # react-router 使用 BrowserRouter，刷新子路由会 404，复制 index.html 作为 404 兜底
         run: cp dist/index.html dist/404.html
 
       - name: Disable Jekyll

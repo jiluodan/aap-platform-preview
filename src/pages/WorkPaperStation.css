@@ -556,20 +556,22 @@
 .wps-tpl-link:hover .wps-tpl-dl { color: #107c41; opacity: 1; transform: translateY(1px); }
 .wps-tpl-link:focus-visible { outline: 2px solid #86efac; outline-offset: 1px; }
 
-/* ===== 工作底稿：已上传文件（文件链接样式，hover 出现删除按钮） ===== */
+/* ===== 工作底稿：已上传文件（完整路径 + 文件名链接，hover 出现删除按钮） ===== */
 .wps-file-link {
   display: inline-flex;
   align-items: center;
-  max-width: 190px;
+  max-width: 260px;
 }
-/* 文件名本身是链接：默认带下划线，hover 加深并加浅色底 */
+/* 目录 + 文件名同属链接：目录弱化、文件名高亮并带下划线；过长时换行 */
 .wps-file-open {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  flex-wrap: wrap;
+  gap: 2px 4px;
   min-width: 0;
-  height: 24px;
-  padding: 0 5px 0 4px;
+  max-width: 240px;
+  min-height: 24px;
+  padding: 2px 5px 2px 4px;
   border: none;
   background: transparent;
   border-radius: 6px;
@@ -583,12 +585,19 @@
 .wps-file-open:hover { background: #eff6ff; color: #1e3a8a; }
 .wps-file-open:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
 .wps-file-icon { display: inline-flex; flex: none; }
-.wps-file-name {
+/* 路径中的目录部分：弱化展示，可任意断行 */
+.wps-file-dir {
   min-width: 0;
-  max-width: 132px;
-  overflow: hidden;
+  color: #94a3b8;
+  font-size: 10.5px;
+  font-weight: 500;
+  word-break: break-all;
+}
+.wps-file-open:hover .wps-file-dir { color: #7c8ca1; }
+/* 文件名：完整展示（不截断），作为链接主体 */
+.wps-file-name {
+  flex: none;
   white-space: nowrap;
-  text-overflow: ellipsis;
   text-decoration: underline;
   text-underline-offset: 2px;
   text-decoration-color: rgba(29, 78, 216, 0.38);

@@ -28,3 +28,4 @@ deploy_raw.bin
 tmp_check.cjs
 tmp_rerun.cjs
 dev-server.err
+dev.err
