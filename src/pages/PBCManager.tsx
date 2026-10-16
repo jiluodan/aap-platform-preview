@@ -109,6 +109,21 @@ const poolCandidates: PBCItem[] = pbcItems.filter(i => i.fileName)
 // ===== 未分类 PBC 文件池 =====
 // 项目组已从客户处收到、但尚未匹配到 PBC 清单具体类型的文件。
 // 通过拖拽到清单条目（或点击选中后再点条目）完成匹配。
+/** 文件部分内容预览：表格型（Excel/明细）或文本型（PDF/合同/决议） */
+type PoolPreview =
+  | { type: 'table'; headers: string[]; rows: string[][]; note: string }
+  | { type: 'text'; lines: string[]; note: string }
+
+/** 预览浮层所需的数据（右侧文件池 / 左侧已匹配文件 共用） */
+type PreviewCardData = {
+  fileName: string
+  fileSize?: string
+  kind: string
+  /** 副标题：大小 · 来源 · 日期 */
+  meta: string
+  preview: PoolPreview
+}
+
 interface PoolFile {
   id: string
   fileName: string
@@ -117,19 +132,161 @@ interface PoolFile {
   /** 来源渠道 */
   source: string
   receivedAt: string
+  /** 用于快速识别文件的部分内容预览 */
+  preview: PoolPreview
 }
 
 const UNCLASSIFIED_FILES: PoolFile[] = [
-  { id: 'uf-01', fileName: '2026Q2_销售明细表.xlsx',        fileSize: '968KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-10' },
-  { id: 'uf-02', fileName: '董事会决议扫描件_20260709.pdf',  fileSize: '1.2MB', kind: 'pdf',  source: '共享盘',   receivedAt: '2026-07-09' },
-  { id: 'uf-03', fileName: '应收账款账龄分析_20260630.xlsx', fileSize: '642KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-08' },
-  { id: 'uf-04', fileName: '银行对账单_招商银行_202606.pdf', fileSize: '2.1MB', kind: 'pdf',  source: '共享盘',   receivedAt: '2026-07-08' },
-  { id: 'uf-05', fileName: '存货盘点表_20260630.xlsx',       fileSize: '418KB', kind: 'xlsx', source: '现场提供', receivedAt: '2026-07-07' },
-  { id: 'uf-06', fileName: '薪资汇总表_202606.xlsx',         fileSize: '306KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-07' },
-  { id: 'uf-07', fileName: '固定资产台账_202606.xlsx',       fileSize: '1.5MB', kind: 'xlsx', source: '共享盘',   receivedAt: '2026-07-06' },
-  { id: 'uf-08', fileName: '增值税申报表_202606.pdf',         fileSize: '764KB', kind: 'pdf',  source: '客户邮件', receivedAt: '2026-07-06' },
-  { id: 'uf-09', fileName: '采购订单明细_2026H1.xlsx',       fileSize: '880KB', kind: 'xlsx', source: '共享盘',   receivedAt: '2026-07-05' },
-  { id: 'uf-10', fileName: '租赁合同_总部办公_扫描.pdf',      fileSize: '3.4MB', kind: 'pdf',  source: '现场提供', receivedAt: '2026-07-04' },
+  {
+    id: 'uf-01', fileName: '2026Q2_销售明细表.xlsx', fileSize: '968KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-10',
+    preview: {
+      type: 'table',
+      headers: ['日期', '客户', '产品', '数量', '金额(元)'],
+      rows: [
+        ['2026-04-03', '华信科技', '智能网关 X1', '120', '1,236,000'],
+        ['2026-04-18', '中科数据', '传感器模组', '340', '986,400'],
+        ['2026-05-09', '恒远电子', '智能网关 X1', '95', '978,500'],
+        ['2026-05-27', '华信科技', '云服务订阅', '1', '420,000'],
+        ['2026-06-15', '南方智造', '传感器模组', '210', '609,000'],
+      ],
+      note: '共 1,284 行 · 仅预览前 5 行（Sheet1）',
+    },
+  },
+  {
+    id: 'uf-02', fileName: '董事会决议扫描件_20260709.pdf', fileSize: '1.2MB', kind: 'pdf', source: '共享盘', receivedAt: '2026-07-09',
+    preview: {
+      type: 'text',
+      lines: [
+        '启元科技有限公司 2026 年第 3 次董事会决议',
+        '会议时间：2026 年 7 月 9 日 14:00',
+        '会议地点：公司总部 12 层第一会议室',
+        '出席董事：王建国、李慧敏、张伟民、陈静（应到 5 人，实到 4 人）',
+        '',
+        '议题一：审议《2026 年半年度财务报告》',
+        '　决议：经审议，全体出席董事一致同意通过该报告。',
+        '议题二：审议对外投资设立全资子公司事项',
+        '　决议：同意以自有资金 2,000 万元设立全资子公司。',
+      ],
+      note: '扫描件 · 共 4 页 · 第 1 页',
+    },
+  },
+  {
+    id: 'uf-03', fileName: '应收账款账龄分析_20260630.xlsx', fileSize: '642KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-08',
+    preview: {
+      type: 'table',
+      headers: ['客户', '1年以内', '1-2年', '2年以上', '合计'],
+      rows: [
+        ['华信科技', '3,120,400', '480,000', '0', '3,600,400'],
+        ['中科数据', '1,980,600', '120,500', '86,000', '2,187,100'],
+        ['恒远电子', '860,000', '0', '240,000', '1,100,000'],
+        ['南方智造', '1,420,300', '310,000', '0', '1,730,300'],
+        ['合计', '7,381,300', '910,500', '326,000', '8,617,800'],
+      ],
+      note: '共 236 行 · 仅预览前 5 行',
+    },
+  },
+  {
+    id: 'uf-04', fileName: '银行对账单_招商银行_202606.pdf', fileSize: '2.1MB', kind: 'pdf', source: '共享盘', receivedAt: '2026-07-08',
+    preview: {
+      type: 'table',
+      headers: ['日期', '摘要', '借方', '贷方', '余额'],
+      rows: [
+        ['06-01', '期初余额', '—', '—', '5,842,310.00'],
+        ['06-05', '收到货款-华信科技', '—', '1,236,000.00', '7,078,310.00'],
+        ['06-12', '支付货款-中兴电子', '486,500.00', '—', '6,591,810.00'],
+        ['06-20', '发放工资', '1,024,800.00', '—', '5,567,010.00'],
+        ['06-30', '月末余额', '—', '—', '5,567,010.00'],
+      ],
+      note: '招商银行 · 账号 ****8823 · 共 3 页',
+    },
+  },
+  {
+    id: 'uf-05', fileName: '存货盘点表_20260630.xlsx', fileSize: '418KB', kind: 'xlsx', source: '现场提供', receivedAt: '2026-07-07',
+    preview: {
+      type: 'table',
+      headers: ['存货编码', '存货名称', '账面数量', '实盘数量', '差异'],
+      rows: [
+        ['WL-1001', '智能网关 X1', '860', '858', '-2'],
+        ['WL-1002', '传感器模组', '1,240', '1,240', '0'],
+        ['WL-1003', '云服务授权卡', '500', '497', '-3'],
+        ['WL-1004', '控制主板', '320', '320', '0'],
+      ],
+      note: '共 412 行 · 仅预览前 4 行',
+    },
+  },
+  {
+    id: 'uf-06', fileName: '薪资汇总表_202606.xlsx', fileSize: '306KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-07',
+    preview: {
+      type: 'table',
+      headers: ['部门', '人数', '应发合计', '社保公积金', '个人所得税', '实发合计'],
+      rows: [
+        ['研发中心', '86', '1,032,000', '196,080', '62,400', '773,520'],
+        ['销售中心', '54', '742,500', '123,255', '41,860', '577,385'],
+        ['职能中心', '32', '368,000', '83,904', '18,240', '265,856'],
+        ['合计', '172', '2,142,500', '403,239', '122,500', '1,616,761'],
+      ],
+      note: '共 172 人 · 仅预览汇总行',
+    },
+  },
+  {
+    id: 'uf-07', fileName: '固定资产台账_202606.xlsx', fileSize: '1.5MB', kind: 'xlsx', source: '共享盘', receivedAt: '2026-07-06',
+    preview: {
+      type: 'table',
+      headers: ['资产编号', '资产名称', '类别', '原值', '累计折旧', '净值'],
+      rows: [
+        ['FA-2001', '生产设备-贴片机', '机器设备', '4,860,000', '1,296,000', '3,564,000'],
+        ['FA-2002', '检测仪 A3', '机器设备', '860,000', '215,000', '645,000'],
+        ['FA-2003', '总部办公楼', '房屋建筑物', '18,600,000', '2,480,000', '16,120,000'],
+        ['FA-2004', '服务器集群', '电子设备', '1,240,000', '620,000', '620,000'],
+      ],
+      note: '共 168 项 · 仅预览前 4 项',
+    },
+  },
+  {
+    id: 'uf-08', fileName: '增值税申报表_202606.pdf', fileSize: '764KB', kind: 'pdf', source: '客户邮件', receivedAt: '2026-07-06',
+    preview: {
+      type: 'table',
+      headers: ['项目', '本期数', '本年累计'],
+      rows: [
+        ['按适用税率计税销售额', '8,642,300.00', '48,915,600.00'],
+        ['销项税额', '1,123,499.00', '6,359,028.00'],
+        ['进项税额', '986,420.00', '5,842,140.00'],
+        ['应纳增值税额', '137,079.00', '516,888.00'],
+      ],
+      note: '国家税务总局格式 · 所属期 2026 年 6 月',
+    },
+  },
+  {
+    id: 'uf-09', fileName: '采购订单明细_2026H1.xlsx', fileSize: '880KB', kind: 'xlsx', source: '共享盘', receivedAt: '2026-07-05',
+    preview: {
+      type: 'table',
+      headers: ['订单号', '供应商', '物料', '数量', '含税金额'],
+      rows: [
+        ['PO-2603012', '中兴电子', '控制主板', '400', '1,360,000'],
+        ['PO-2604028', '联创精密', '传感器模组', '1,200', '864,000'],
+        ['PO-2605044', '中兴电子', '智能网关 X1', '300', '1,020,000'],
+        ['PO-2606038', '华芯半导', '通信芯片', '5,000', '1,750,000'],
+      ],
+      note: '共 326 张订单 · 仅预览前 4 张',
+    },
+  },
+  {
+    id: 'uf-10', fileName: '租赁合同_总部办公_扫描.pdf', fileSize: '3.4MB', kind: 'pdf', source: '现场提供', receivedAt: '2026-07-04',
+    preview: {
+      type: 'text',
+      lines: [
+        '房屋租赁合同',
+        '出租方（甲方）：启元置业有限公司',
+        '承租方（乙方）：启元科技有限公司',
+        '',
+        '第一条　租赁物：总部办公楼 8–12 层，建筑面积 4,860 ㎡',
+        '第二条　租赁期限：2024-01-01 至 2028-12-31（共 5 年）',
+        '第三条　租金：每月人民币 486,000 元，按季预付',
+        '第四条　押金：相当于 3 个月租金，计 1,458,000 元',
+      ],
+      note: '扫描件 · 共 12 页 · 第 1 页',
+    },
+  },
 ]
 
 const POOL_FILE_MAP: Record<string, PoolFile> = Object.fromEntries(UNCLASSIFIED_FILES.map(f => [f.id, f]))
@@ -173,6 +330,64 @@ function PBCManager() {
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<number | null>(null)
 
+  // ===== 未分类文件「部分内容预览」=====
+  const [previewFileId, setPreviewFileId] = useState<string | null>(null)
+  /** 预览浮层相对右栏顶部的偏移，使浮层与所点条目对齐 */
+  const [previewTop, setPreviewTop] = useState(0)
+  const rightPanelRef = useRef<HTMLElement | null>(null)
+
+  // ===== 左侧清单「已匹配文件」部分内容预览 =====
+  /** 正在预览的条目 id + 浮层相对左栏的偏移（由所点眼睛按钮计算） */
+  const [rowPreview, setRowPreview] = useState<{ itemId: string; top: number; left: number } | null>(null)
+  const leftPanelRef = useRef<HTMLDivElement | null>(null)
+
+  /** 打开 / 切换某文件的部分内容预览（浮层出现在该条目左侧） */
+  const openFilePreview = (e: React.MouseEvent<HTMLButtonElement>, f: PoolFile) => {
+    e.stopPropagation()
+    if (previewFileId === f.id) { setPreviewFileId(null); return }
+    const itemEl = e.currentTarget.closest('.plv-pool-item') as HTMLElement | null
+    const panel = rightPanelRef.current
+    if (itemEl && panel) {
+      const ir = itemEl.getBoundingClientRect()
+      const pr = panel.getBoundingClientRect()
+      const POP_H = 300
+      // 以 .plv-right 为定位基准，同时把浮层钳制在视口内（允许向上溢出到清单区域）
+      const minTop = 8 - pr.top
+      const maxTop = window.innerHeight - POP_H - 8 - pr.top
+      setPreviewTop(Math.max(minTop, Math.min(ir.top - pr.top - 4, Math.max(minTop, maxTop))))
+    } else {
+      setPreviewTop(0)
+    }
+    setPreviewFileId(f.id)
+  }
+
+  /**
+   * 打开 / 切换某条目「已匹配文件」的部分内容预览。
+   * 浮层出现在该行文件列右侧，并钳制在左栏宽度内，避免压住右侧文件池。
+   */
+  const openRowPreview = (e: React.MouseEvent<HTMLButtonElement>, itemId: string) => {
+    e.stopPropagation()
+    if (rowPreview?.itemId === itemId) { setRowPreview(null); return }
+    const btn = e.currentTarget
+    const panel = leftPanelRef.current
+    if (btn && panel) {
+      const br = btn.getBoundingClientRect()
+      const pr = panel.getBoundingClientRect()
+      const POP_W = 348
+      const POP_H = 300
+      const maxLeft = pr.width - POP_W - 6
+      const minTop = 8 - pr.top
+      const maxTop = window.innerHeight - POP_H - 8 - pr.top
+      setRowPreview({
+        itemId,
+        left: Math.max(6, Math.min(br.right - pr.left + 10, Math.max(6, maxLeft))),
+        top: Math.max(minTop, Math.min(br.top - pr.top - 4, Math.max(minTop, maxTop))),
+      })
+    } else {
+      setRowPreview({ itemId, left: 6, top: 0 })
+    }
+  }
+
   const pool = useMemo(() => UNCLASSIFIED_FILES.filter(f => poolIds.includes(f.id)), [poolIds])
 
   const showToast = (msg: string) => {
@@ -208,6 +423,7 @@ function PBCManager() {
       return UNCLASSIFIED_FILES.map(p => p.id).filter(id => next.has(id))
     })
     setStatusOverride(s => ({ ...s, [itemId]: 'review' }))
+    setRowPreview(null) // 文件发生变化，关闭旧的预览浮层
     setFlashId(itemId)
     window.setTimeout(() => setFlashId(cur => (cur === itemId ? null : cur)), 1100)
     showToast(t(`已将「${f.fileName}」匹配到「${resolveDesc(item.description, isZh)}」`,
@@ -221,6 +437,7 @@ function PBCManager() {
     setMatches(m => { const n = { ...m }; delete n[itemId]; return n })
     setPoolIds(ids => UNCLASSIFIED_FILES.map(p => p.id).filter(id => id === pid || ids.includes(id)))
     setStatusOverride(s => { const n = { ...s }; delete n[itemId]; return n })
+    setRowPreview(null) // 文件发生变化，关闭旧的预览浮层
     showToast(t('已取消匹配，文件已放回未分类文件池', 'Unmatched — file returned to the pool'))
   }
 
@@ -250,6 +467,50 @@ function PBCManager() {
   const sc = (key: string) => {
     const d = statusDefMap[key as PBCStatus] || PBC_STATUS_FLOW[0]
     return { label: isZh ? d.zh : d.en, color: d.color, bg: d.bg }
+  }
+
+  /**
+   * 条目「已匹配文件」的预览内容：
+   * 来自文件池的文件沿用其预置的部分内容；条目自带文件（演示数据）没有正文，
+   * 按条目信息生成一份文件摘要，便于快速识别。
+   */
+  const rowFilePreview = (item: PBCItem): PreviewCardData | null => {
+    const file = effFile(item)
+    if (!file) return null
+    const poolId = matches[item.id]
+    const pf = poolId ? POOL_FILE_MAP[poolId] : undefined
+    if (pf) {
+      return {
+        fileName: pf.fileName,
+        fileSize: pf.fileSize,
+        kind: pf.kind,
+        meta: `${pf.fileSize} · ${pf.source} · ${pf.receivedAt}`,
+        preview: pf.preview,
+      }
+    }
+    const cat = categoryMetaMap[item.category]
+    const lines = [
+      `${t('文件名', 'File')}：${file.name}`,
+      `${t('大小', 'Size')}：${file.size || '—'}　${t('类型', 'Type')}：${file.kind.toUpperCase()}`,
+      `${t('所属条目', 'Item')}：${resolveDesc(item.description, isZh)}`,
+      `${t('所属大类', 'Category')}：${cat ? (isZh ? cat.zh : cat.en) : item.category}`,
+      `${t('状态', 'Status')}：${sc(effStatus(item)).label}`,
+      `${t('负责人', 'Assignee')}：${item.assignee || item.requestedBy}　${t('截止', 'Due')}：${item.dueDate}`,
+      '',
+      t('演示环境未接入文件正文，此处展示文件识别信息。',
+        'No file body in this demo — identification info only.'),
+    ]
+    return {
+      fileName: file.name,
+      fileSize: file.size,
+      kind: file.kind,
+      meta: `${file.size || '—'} · ${t('条目自带文件', 'Item file')}`,
+      preview: {
+        type: 'text',
+        lines,
+        note: t('文件摘要 · 原型演示', 'File summary · prototype demo'),
+      },
+    }
   }
 
   // --- File Pool 推送 ---
@@ -415,10 +676,84 @@ function PBCManager() {
   }
 
   useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpandedCategory(null) }
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      setExpandedCategory(null)
+      setPreviewFileId(null)
+      setRowPreview(null)
+    }
     window.addEventListener('keydown', handleEsc)
     return () => window.removeEventListener('keydown', handleEsc)
   }, [])
+
+  // 点击浮层/预览按钮以外的区域、或滚动页面 → 关闭预览
+  useEffect(() => {
+    if (!previewFileId && !rowPreview) return
+    const onDown = (e: MouseEvent) => {
+      const el = e.target as HTMLElement
+      if (el.closest('.plv-preview-pop') || el.closest('.plvi-preview-btn') || el.closest('.plv-file-eye')) return
+      setPreviewFileId(null)
+      setRowPreview(null)
+    }
+    const onScroll = () => { setPreviewFileId(null); setRowPreview(null) }
+    document.addEventListener('mousedown', onDown)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      window.removeEventListener('scroll', onScroll, true)
+    }
+  }, [previewFileId, rowPreview])
+
+  /** 文件部分内容预览浮层（右侧文件池 / 左侧已匹配文件 共用） */
+  const renderPreviewCard = (
+    data: PreviewCardData,
+    onClose: () => void,
+    position?: { style?: React.CSSProperties; className?: string },
+  ) => (
+    <div className={`plv-preview-pop ${position?.className || ''}`} style={position?.style} role="dialog"
+      aria-label={t('文件预览', 'File preview')}>
+      <div className="plvp-pop-head">
+        <span className={`plvi-icon ${data.kind}`}>{data.kind.slice(0, 3).toUpperCase()}</span>
+        <div className="plvp-pop-title">
+          <div className="plvp-pop-name" title={data.fileName}>{data.fileName}</div>
+          <div className="plvp-pop-sub">{data.meta}</div>
+        </div>
+        <button type="button" className="plvp-pop-close"
+          title={t('关闭', 'Close')} aria-label={t('关闭', 'Close')}
+          onClick={onClose}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div className="plvp-pop-body">
+        {data.preview.type === 'table' ? (
+          <table className="plvp-pop-table">
+            <thead>
+              <tr>{data.preview.headers.map((h, i) => <th key={i}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {data.preview.rows.map((row, ri) => (
+                <tr key={ri}>{row.map((cell, ci) => <td key={ci}>{cell}</td>)}</tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="plvp-pop-text">
+            {data.preview.lines.map((line, i) => <div key={i}>{line || '\u00A0'}</div>)}
+          </div>
+        )}
+      </div>
+
+      <div className="plvp-pop-foot">
+        <span className="plvp-pop-note" title={data.preview.note}>{data.preview.note}</span>
+        <button type="button" className="plvp-pop-open"
+          onClick={() => openFile(data.fileName, data.fileSize)}>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          {t('打开文件', 'Open')}
+        </button>
+      </div>
+    </div>
+  )
 
   // ======================== RENDER ========================
   return (
@@ -791,7 +1126,7 @@ function PBCManager() {
 
           <div className="plv-split">
             {/* ===== 左：PBC 管理清单（树形） ===== */}
-            <div className="plv-left">
+            <div className="plv-left" ref={leftPanelRef}>
               {pickedPoolId && (
                 <div className="plv-pick-banner">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
@@ -933,14 +1268,14 @@ function PBCManager() {
                                 {file ? (
                                   <div className="plv-file-cell">
                                     <button
-                                      className="plv-file-icon"
-                                      title={`${t('打开文件', 'Open file')}：${file.name}${file.size ? ` (${file.size})` : ''}`}
-                                      aria-label={`${t('打开文件', 'Open file')}：${file.name}`}
-                                      onClick={e => { e.stopPropagation(); openFile(file.name, file.size) }}
+                                      className={`plv-file-eye ${rowPreview?.itemId === item.id ? 'active' : ''}`}
+                                      title={`${t('预览文件内容', 'Preview file')}：${file.name}${file.size ? ` (${file.size})` : ''}`}
+                                      aria-label={`${t('预览文件内容', 'Preview file')}：${file.name}`}
+                                      onClick={e => openRowPreview(e, item.id)}
                                     >
-                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                                        <polyline points="14 2 14 8 20 8" />
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                        <circle cx="12" cy="12" r="3" />
                                       </svg>
                                     </button>
                                     <span className="plv-file-name" title={file.name}
@@ -1011,10 +1346,21 @@ function PBCManager() {
                 </tbody>
               </table>
               </main>
+
+              {/* 已匹配文件预览浮层（浮于该行文件列右侧，用于快速识别文件） */}
+              {rowPreview && (() => {
+                const item = pbcItems.find(i => i.id === rowPreview.itemId)
+                const pv = item ? rowFilePreview(item) : null
+                if (!pv) return null
+                return renderPreviewCard(pv, () => setRowPreview(null), {
+                  className: 'plv-pop-row',
+                  style: { top: rowPreview.top, left: rowPreview.left },
+                })
+              })()}
             </div>
 
             {/* ===== 右：未分类 PBC 文件池（拖拽来源） ===== */}
-            <aside className="plv-right">
+            <aside className="plv-right" ref={rightPanelRef}>
               <div className="plv-pool-card">
                 <div className="plv-pool-head">
                   <div className="plvph-title">
@@ -1028,6 +1374,7 @@ function PBCManager() {
                   </div>
                 </div>
                 <div className={`plv-pool ${poolDropActive ? 'drop-active' : ''}`}
+                  onScroll={() => setPreviewFileId(null)}
                   onDragOver={e => {
                     if (draggingPoolId) return
                     if (!e.dataTransfer.types.includes('application/x-pbc-item')) return
@@ -1049,14 +1396,25 @@ function PBCManager() {
                         e.dataTransfer.effectAllowed = 'move'
                         setDraggingPoolId(f.id)
                         setPickedPoolId(null)
+                        setPreviewFileId(null)
                       }}
                       onDragEnd={() => { setDraggingPoolId(null); setDragOverId(null) }}
-                      onClick={() => setPickedPoolId(cur => (cur === f.id ? null : f.id))}>
+                      onClick={() => { setPreviewFileId(null); setPickedPoolId(cur => (cur === f.id ? null : f.id)) }}>
                       <span className={`plvi-icon ${f.kind}`}>{f.kind.slice(0, 3).toUpperCase()}</span>
                       <div className="plvi-main">
                         <div className="plvi-name" title={f.fileName}>{f.fileName}</div>
                         <div className="plvi-meta">{f.fileSize} · {f.source} · {f.receivedAt}</div>
                       </div>
+                      <button type="button"
+                        className={`plvi-preview-btn ${previewFileId === f.id ? 'active' : ''}`}
+                        title={t('预览文件内容', 'Preview file')}
+                        aria-label={t('预览文件内容', 'Preview file')}
+                        onClick={e => openFilePreview(e, f)}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      </button>
                     </div>
                   ))}
                   {pool.length === 0 && (
@@ -1067,6 +1425,23 @@ function PBCManager() {
                   )}
                 </div>
               </div>
+
+              {/* 文件部分内容预览浮层（浮于文件条目左侧，用于快速识别文件） */}
+              {previewFileId && (() => {
+                const pf = POOL_FILE_MAP[previewFileId]
+                if (!pf) return null
+                return renderPreviewCard(
+                  {
+                    fileName: pf.fileName,
+                    fileSize: pf.fileSize,
+                    kind: pf.kind,
+                    meta: `${pf.fileSize} · ${pf.source} · ${pf.receivedAt}`,
+                    preview: pf.preview,
+                  },
+                  () => setPreviewFileId(null),
+                  { style: { top: previewTop } },
+                )
+              })()}
             </aside>
           </div>
         </div>
