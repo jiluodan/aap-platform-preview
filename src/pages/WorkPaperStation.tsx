@@ -6,7 +6,6 @@ import {
   findProcedureItem,
   findProcedureType,
   procedureTypeIcon,
-  procedureTypeShortName,
 } from '../data/auditProcedures'
 import { downloadSampleWorkPaperTemplate } from '../utils/sampleExcel'
 import { useLanguage } from '../contexts/LanguageContext'
@@ -40,11 +39,16 @@ type ReviewStatus = 'In Progress' | 'Pending for review' | 'Review Completed'
 /** 文档审核状态（Doc Review Status 列）：由 Actions 列的审核按钮驱动 */
 type DocReviewStatus = 'Pending review' | 'Reviewed'
 
+/** 实质性程序类型（TOD / SAP 为常规类型，Confirmation / Stocktake 为专项程序） */
+type SubstWpType = 'WT' | 'TOE' | 'TOD' | 'SAP' | 'Confirmation' | 'Stocktake'
+
 interface SubstWpRow {
   id: string
   businessProcess: string
   procedureName: string
-  type: 'WT' | 'TOE' | 'TOD' | 'SAP'
+  type: SubstWpType
+  /** 关联系统：Vouching platform / OAK / KOIC / E-lease，无系统时为 N/A */
+  relatedSystem: string
   samplingMethod: SamplingMethod
   /** 样本量；抽样方法为 N/A 时为 null（该列显示 N/A） */
   sampleCount: number | null
@@ -83,70 +87,50 @@ interface KcwFileOption {
 
 // ===== Demo Data =====
 const standardWpRows: WpRow[] = [
-  { id: 's1', name: 'D&A Routine Output', category: 'Other', requiredType: 'Required', linkedKcwActivity: 'kcw_act_778095', status: 'Not Selected' },
-  { id: 's2', name: 'Independent Workpaper on Fees-related Requirements', category: 'Independent', requiredType: 'Required', linkedKcwActivity: 'kcw_act_82144d', status: 'Not Selected' },
-  { id: 's3', name: 'Tax Provision Review – Specialist WP', category: 'Specialists', requiredType: 'Required', linkedKcwActivity: 'kcw_act_599xe5', status: 'Not Selected' },
-  { id: 'o1', name: 'Other Payables – Vouching', category: 'General Purpose', requiredType: 'Highly Rec.', linkedKcwActivity: 'kcw_act_cfdtbo', status: 'Not Selected' },
+  { id: 's1', name: 'Inquiry Agenda', category: 'Risk assessment and planning', requiredType: 'Required', linkedKcwActivity: 'kcw_act_4a91cf', status: 'Not Selected' },
+  { id: 's2', name: 'Going Concern - Identification of Events or Conditions - Required Work Paper', category: 'Going concern', requiredType: 'Required', linkedKcwActivity: 'kcw_act_7b23de', status: 'Not Selected' },
+  { id: 's3', name: 'Independence Work Paper on Fees-related requirements', category: 'Independence', requiredType: 'Required', linkedKcwActivity: 'kcw_act_82144d', status: 'Not Selected' },
+  { id: 's4', name: 'IRM specialists - Planning memorandum', category: 'Specialists & Specific Team Members', requiredType: 'Required', linkedKcwActivity: 'kcw_act_9c40b1', status: 'Not Selected' },
+  { id: 's5', name: 'Actuarial criticality checklist', category: 'Risk assessment and planning', requiredType: 'Required', linkedKcwActivity: 'kcw_act_2f7e58', status: 'Not Selected' },
+  { id: 's6', name: 'Centralized Services - Scope Document', category: 'Group audit', requiredType: 'Required', linkedKcwActivity: 'kcw_act_6d13a7', status: 'Not Selected' },
 ]
 
 const substWpRowSeeds: SubstWpRowSeed[] = [
-  // 财务报告
-  { id: 'r01', businessProcess: '财务报告', procedureName: 'Additional Personal Independence Requirements for CSA Audit Engagements', type: 'WT', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: 'Indep_WP.docx', reviewStatus: 'Review Completed', uploader: 'Huang lan (SH/AQPF)', rmId: 'RM_e56af2', kcwActivity: 'kcw_act_342b0', preChecked: true, actions: ['AFP'] },
-  { id: 'r02', businessProcess: '财务报告', procedureName: 'Group Audit Instructions – Component Auditors', type: 'TOE', samplingMethod: 'KSP', sampleCount: 64, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'Pending for review', uploader: 'Lu los (HZ/CP1)', rmId: 'RM_c6633b', kcwActivity: 'kcw_act_4c38e', preChecked: true, actions: ['OAK'] },
-  { id: 'r03', businessProcess: '财务报告', procedureName: 'Financial Statement Close – Substantive Analytical Procedures', type: 'SAP', samplingMethod: 'MUS', sampleCount: 20, wpTemplate: 'Wp Temp', workingPaper: 'FS_Close.xlsx', reviewStatus: 'Pending for review', uploader: 'Chen (SZ/CP2)', rmId: 'RM_a12c44', kcwActivity: 'kcw_act_778095', preChecked: true, actions: ['OA Review'] },
-  // 诉讼
-  { id: 'r04', businessProcess: '诉讼', procedureName: 'Litigation & Contingencies – Legal Letter', type: 'TOE', samplingMethod: 'MUS', sampleCount: 20, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Wang (BJ/Legal)', rmId: 'RM_l98f21', kcwActivity: 'kcw_act_55a21', preChecked: false, actions: ['OA Confirm'] },
-  { id: 'r05', businessProcess: '诉讼', procedureName: 'Contingent Liabilities Assessment', type: 'WT', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Wang (BJ/Legal)', rmId: 'RM_l98f22', kcwActivity: 'kcw_act_55a22', preChecked: false, actions: ['OA Review'] },
-  // 销售
-  { id: 'r06', businessProcess: '销售', procedureName: 'Revenue Recognition – Cut-off Testing', type: 'TOD', samplingMethod: 'KSP', sampleCount: 40, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Chen (SZ/CP2)', rmId: 'RM_e86a38', kcwActivity: 'kcw_act_3bH60', preChecked: false, actions: ['OA Vouching'] },
-  { id: 'r07', businessProcess: '销售', procedureName: 'Trade Receivables – Circularisation', type: 'TOE', samplingMethod: 'KSP', sampleCount: 62, wpTemplate: 'Wp Temp', workingPaper: 'AR_Circ.xlsx', reviewStatus: 'Pending for review', uploader: 'Lu los (HZ/CP1)', rmId: 'RM_c73f0e5', kcwActivity: 'kcw_act_63e9e9', preChecked: true, actions: ['OA Confirm'] },
-  { id: 'r08', businessProcess: '销售', procedureName: 'Sales Volume & Allowance (Bad Debt)', type: 'SAP', samplingMethod: 'MUS', sampleCount: 30, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Hu, Freya (BJ/CP3)', rmId: 'RM_d47b01', kcwActivity: 'kcw_act_77c10', preChecked: false, actions: ['OA Model'] },
-  // 采购
-  { id: 'r09', businessProcess: '采购', procedureName: 'Procurement – Vendor Confirmation', type: 'TOE', samplingMethod: 'KSP', sampleCount: 30, wpTemplate: 'Wp Temp', workingPaper: 'Vendor_Conf.xlsx', reviewStatus: 'Pending for review', uploader: 'Lu los (HZ/CP1)', rmId: 'RM_p22a90', kcwActivity: 'kcw_act_88d22', preChecked: true, actions: ['OA Confirm'] },
-  { id: 'r10', businessProcess: '采购', procedureName: 'Purchase Price Variance', type: 'WT', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Chen (SZ/CP2)', rmId: 'RM_p22a91', kcwActivity: 'kcw_act_88d23', preChecked: false, actions: ['OA Review'] },
-  // 存货与成本
-  { id: 'r11', businessProcess: '存货与成本', procedureName: 'Inventory Work Paper – Existence & Valuation', type: 'TOD', samplingMethod: 'KSP', sampleCount: 25, wpTemplate: 'Wp Temp', workingPaper: 'Inv_WP.xlsx', reviewStatus: 'Review Completed', uploader: 'Chen (SZ/CP2)', rmId: 'RM_44159f', kcwActivity: 'kcw_act_47000', preChecked: true, actions: ['OA Vouching'] },
-  { id: 'r12', businessProcess: '存货与成本', procedureName: 'Cost of Sales – Roll-forward', type: 'SAP', samplingMethod: 'MUS', sampleCount: 35, wpTemplate: 'Wp Temp', workingPaper: 'COS_RF.xlsx', reviewStatus: 'Pending for review', uploader: 'Hu, Freya (BJ/CP3)', rmId: 'RM_4415a0', kcwActivity: 'kcw_act_47001', preChecked: true, actions: ['OA Model'] },
-  { id: 'r13', businessProcess: '存货与成本', procedureName: 'Inventory NRV Impairment', type: 'WT', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Chen (SZ/CP2)', rmId: 'RM_4415a1', kcwActivity: 'kcw_act_47002', preChecked: false, actions: ['OA Review'] },
-  // 固定资产与在建工程
-  { id: 'r14', businessProcess: '固定资产与在建工程', procedureName: 'PPE – Addition & Depreciation', type: 'TOD', samplingMethod: 'KSP', sampleCount: 40, wpTemplate: 'Wp Temp', workingPaper: 'FA_Tag.xlsx', reviewStatus: 'Review Completed', uploader: 'Huang lan (SH/AQPF)', rmId: 'RM_fa001', kcwActivity: 'kcw_act_99001', preChecked: true, actions: ['OA Vouching'] },
-  { id: 'r15', businessProcess: '固定资产与在建工程', procedureName: 'Construction in Progress – Capitalisation', type: 'TOE', samplingMethod: 'MUS', sampleCount: 15, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'Pending for review', uploader: 'Huang lan (SH/AQPF)', rmId: 'RM_fa002', kcwActivity: 'kcw_act_99002', preChecked: true, actions: ['OA Site'] },
-  { id: 'r16', businessProcess: '固定资产与在建工程', procedureName: 'Impairment of Long-lived Assets', type: 'WT', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Hu, Freya (BJ/CP3)', rmId: 'RM_fa003', kcwActivity: 'kcw_act_99003', preChecked: false, actions: ['OA Review'] },
-  // 税务
-  { id: 'r17', businessProcess: '税务', procedureName: 'Tax Provision Review – Specialist WP', type: 'WT', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: 'Tax_Prov.xlsx', reviewStatus: 'Review Completed', uploader: 'Huang lan (SH/AQPF)', rmId: 'RM_21f971', kcwActivity: 'kcw_act_599xe5', preChecked: true, actions: ['AFP'] },
-  { id: 'r18', businessProcess: '税务', procedureName: 'Transfer Pricing Documentation', type: 'TOE', samplingMethod: 'MUS', sampleCount: 18, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Wang (BJ/Tax)', rmId: 'RM_tx002', kcwActivity: 'kcw_act_599xe6', preChecked: false, actions: ['OA Review'] },
-  // 人力资源
-  { id: 'r19', businessProcess: '人力资源', procedureName: 'Payroll – Completeness', type: 'TOD', samplingMethod: 'KSP', sampleCount: 30, wpTemplate: 'Wp Temp', workingPaper: 'Payroll.xlsx', reviewStatus: 'Pending for review', uploader: 'Hu, Freya (BJ/CP3)', rmId: 'RM_hr001', kcwActivity: 'kcw_act_66100', preChecked: true, actions: ['OA Vouching'] },
-  { id: 'r20', businessProcess: '人力资源', procedureName: 'Independent Workpaper on Fees-related Requirements', type: 'WT', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: 'Fees_WP.xlsx', reviewStatus: 'Review Completed', uploader: 'Huang lan (SH/AQPF)', rmId: 'RM_89bf72', kcwActivity: 'kcw_act_82144d', preChecked: true, actions: ['AFP'] },
-  // 资金与融资
-  { id: 'r21', businessProcess: '资金与融资', procedureName: 'Bank Balances – Confirmation', type: 'TOE', samplingMethod: 'KSP', sampleCount: 60, wpTemplate: 'Wp Temp', workingPaper: 'Bank_Conf.xlsx', reviewStatus: 'Review Completed', uploader: 'Lu los (HZ/CP1)', rmId: 'RM_tr001', kcwActivity: 'kcw_act_77001', preChecked: true, actions: ['OA Confirm'] },
-  { id: 'r22', businessProcess: '资金与融资', procedureName: 'Borrowings – Existence & Obligations', type: 'WT', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'Pending for review', uploader: 'Lu los (HZ/CP1)', rmId: 'RM_tr002', kcwActivity: 'kcw_act_77002', preChecked: true, actions: ['OA Review'] },
+  // 销售与应收账款
+  { id: 'r01', businessProcess: 'Sales, trade receivables', procedureName: 'Revenue throughout the period – inspect, vouch and evaluate', type: 'TOD', relatedSystem: 'Vouching platform', samplingMethod: 'KSP', sampleCount: 40, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Chen (SZ/CP2)', rmId: 'RM_sp001', kcwActivity: 'kcw_act_5a0101', preChecked: false, actions: ['OA Vouching'] },
+  { id: 'r02', businessProcess: 'Sales, trade receivables', procedureName: 'Trade receivables - voucher to relevant documentation', type: 'TOD', relatedSystem: 'Vouching platform', samplingMethod: 'KSP', sampleCount: 30, wpTemplate: 'Wp Temp', workingPaper: 'AR_Circ.xlsx', reviewStatus: 'Pending for review', uploader: 'Lu los (HZ/CP1)', rmId: 'RM_sp002', kcwActivity: 'kcw_act_5a0102', preChecked: true, actions: ['OA Vouching'] },
+  { id: 'r03', businessProcess: 'Sales, trade receivables', procedureName: 'Sales - cut-off test', type: 'TOD', relatedSystem: 'Vouching platform', samplingMethod: 'KSP', sampleCount: 25, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Hu, Freya (BJ/CP3)', rmId: 'RM_sp003', kcwActivity: 'kcw_act_5a0103', preChecked: false, actions: ['OA Vouching'] },
+  { id: 'r04', businessProcess: 'Sales, trade receivables', procedureName: 'Sales - Three-way match - D&A', type: 'SAP', relatedSystem: 'OAK', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Chen (SZ/CP2)', rmId: 'RM_sp004', kcwActivity: 'kcw_act_5a0104', preChecked: false, actions: ['OAK'] },
+  // 现金及现金等价物
+  { id: 'r05', businessProcess: 'Cash and cash equivalents', procedureName: 'Cash and cash equivalents - bank confirmation', type: 'Confirmation', relatedSystem: 'OAK', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: 'Bank_Conf.xlsx', reviewStatus: 'Review Completed', uploader: 'Lu los (HZ/CP1)', rmId: 'RM_sp005', kcwActivity: 'kcw_act_5a0105', preChecked: true, actions: ['OA Confirm'] },
+  { id: 'r06', businessProcess: 'Cash and cash equivalents', procedureName: 'Cash and cash equivalents - bank reconciliation', type: 'SAP', relatedSystem: 'N/A', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Lu los (HZ/CP1)', rmId: 'RM_sp006', kcwActivity: 'kcw_act_5a0106', preChecked: false, actions: ['OA Review'] },
+  // 存货、成本及销售成本（标准成本）
+  { id: 'r07', businessProcess: 'Stock, inventory and cost of sales - standard cost', procedureName: 'Cost of goods sold - vouch', type: 'TOD', relatedSystem: 'Vouching platform', samplingMethod: 'KSP', sampleCount: 35, wpTemplate: 'Wp Temp', workingPaper: 'COS_RF.xlsx', reviewStatus: 'Pending for review', uploader: 'Hu, Freya (BJ/CP3)', rmId: 'RM_sp007', kcwActivity: 'kcw_act_5a0107', preChecked: true, actions: ['OA Vouching'] },
+  { id: 'r08', businessProcess: 'Stock, inventory and cost of sales - standard cost', procedureName: 'Inventory observations', type: 'Stocktake', relatedSystem: 'KOIC', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: 'Inv_WP.xlsx', reviewStatus: 'Review Completed', uploader: 'Chen (SZ/CP2)', rmId: 'RM_sp008', kcwActivity: 'kcw_act_5a0108', preChecked: true, actions: ['OA Site'] },
+  { id: 'r09', businessProcess: 'Stock, inventory and cost of sales - standard cost', procedureName: 'Inventory fixed costs of conversion (standard cost method) - vouch and recalculate', type: 'SAP', relatedSystem: 'N/A', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Chen (SZ/CP2)', rmId: 'RM_sp009', kcwActivity: 'kcw_act_5a0109', preChecked: false, actions: ['OA Review'] },
+  { id: 'r10', businessProcess: 'Stock, inventory and cost of sales - standard cost', procedureName: 'Inventory cost variance allocation (standard cost method) – recalculate', type: 'SAP', relatedSystem: 'N/A', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Hu, Freya (BJ/CP3)', rmId: 'RM_sp010', kcwActivity: 'kcw_act_5a0110', preChecked: false, actions: ['OA Review'] },
+  // 物业、厂房及设备
+  { id: 'r11', businessProcess: 'Property, plant and equipment', procedureName: 'PPE disposals and retirements - vouch (GOSPD05009)', type: 'TOD', relatedSystem: 'Vouching platform', samplingMethod: 'KSP', sampleCount: 20, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Huang lan (SH/AQPF)', rmId: 'RM_sp011', kcwActivity: 'kcw_act_5a0111', preChecked: false, actions: ['OA Vouching'] },
+  { id: 'r12', businessProcess: 'Property, plant and equipment', procedureName: 'PPE additions -vouch (SPD05001)', type: 'TOD', relatedSystem: 'Vouching platform', samplingMethod: 'KSP', sampleCount: 25, wpTemplate: 'Wp Temp', workingPaper: 'FA_Tag.xlsx', reviewStatus: 'Pending for review', uploader: 'Huang lan (SH/AQPF)', rmId: 'RM_sp012', kcwActivity: 'kcw_act_5a0112', preChecked: true, actions: ['OA Vouching'] },
+  // 租赁
+  { id: 'r13', businessProcess: 'Lease', procedureName: 'Rental lease reconciliation', type: 'SAP', relatedSystem: 'E-lease', samplingMethod: 'N/A', sampleCount: null, wpTemplate: 'Wp Temp', workingPaper: '', reviewStatus: 'In Progress', uploader: 'Wang (BJ/Tax)', rmId: 'RM_sp013', kcwActivity: 'kcw_act_5a0113', preChecked: false, actions: ['OA Review'] },
 ]
 
 // 行 → Audit Procedure 模块的对应关系（按业务实质手工关联的 demo 映射）
 const AUDIT_PROCEDURE_LINKS: Record<string, WpAuditProcedure> = {
-  r01: { typeKey: 'fsr', itemCode: 'FSR-001' },
-  r02: { typeKey: 'group-audit', itemCode: 'GA-001' },
-  r03: { typeKey: 'fsr', itemCode: 'FSR-002' },
-  r04: { typeKey: 'kdc-confirm', itemCode: 'KDC-F003' },
-  r05: { typeKey: 'credit-review', itemCode: 'CR-002' },
-  r06: { typeKey: 'vouching', itemCode: 'VO-001' },
-  r07: { typeKey: 'kdc-confirm', itemCode: 'KDC-F002' },
-  r08: { typeKey: 'credit-review', itemCode: 'CR-001' },
-  r09: { typeKey: 'vouching', itemCode: 'VO-003' },
-  r10: { typeKey: 'je-testing', itemCode: 'JE-003' },
-  r11: { typeKey: 'inventory-obs', itemCode: 'IO-001' },
-  r12: { typeKey: 'inventory-obs', itemCode: 'IO-003' },
-  r13: { typeKey: 'inventory-obs', itemCode: 'IO-002' },
-  r14: { typeKey: 'physical-attn', itemCode: 'PA-001' },
-  r15: { typeKey: 'physical-attn', itemCode: 'PA-002' },
-  r16: { typeKey: 'vouching', itemCode: 'VO-002' },
-  r17: { typeKey: 'fsr', itemCode: 'FSR-003' },
-  r18: { typeKey: 'group-audit', itemCode: 'GA-002' },
-  r19: { typeKey: 'vouching', itemCode: 'VO-004' },
-  r20: { typeKey: 'vouching', itemCode: 'VO-002' },
-  r21: { typeKey: 'kdc-cash', itemCode: 'KDC-C001' },
-  r22: { typeKey: 'kdc-cash', itemCode: 'KDC-C002' },
+  r01: { typeKey: 'vouching', itemCode: 'VO-001' },        // Revenue Vouching
+  r02: { typeKey: 'vouching', itemCode: 'VO-001' },        // Revenue Vouching
+  r03: { typeKey: 'vouching', itemCode: 'VO-001' },        // Revenue Vouching
+  r04: { typeKey: 'alteryx', itemCode: 'ALY-001' },        // D&A 全量数据测试
+  r05: { typeKey: 'kdc-confirm', itemCode: 'KDC-F001' },   // Bank Confirmation
+  r06: { typeKey: 'kdc-cash', itemCode: 'KDC-C001' },      // Bank Reconciliation
+  r07: { typeKey: 'vouching', itemCode: 'VO-003' },        // Purchase Vouching
+  r08: { typeKey: 'inventory-obs', itemCode: 'IO-001' },   // Physical Inventory Observation
+  r09: { typeKey: 'inventory-obs', itemCode: 'IO-003' },   // Inventory Valuation Check
+  r10: { typeKey: 'inventory-obs', itemCode: 'IO-003' },   // Inventory Valuation Check
+  r11: { typeKey: 'vouching', itemCode: 'VO-002' },        // Expense Vouching
+  r12: { typeKey: 'vouching', itemCode: 'VO-002' },        // Expense Vouching
+  r13: { typeKey: 'lease-recalc', itemCode: 'LR-001' },    // Lease Liability Recalculation
 }
 
 const DEFAULT_AUDIT_PROCEDURE: WpAuditProcedure = { typeKey: 'fsr', itemCode: 'FSR-001' }
@@ -481,17 +465,13 @@ function useCopy(): WpsCopy {
   return WPS_COPY[lang]
 }
 
-// 业务流程：受控词表，英文界面下展示英文分类名
-const BUSINESS_PROCESS_EN: Record<string, string> = {
-  '财务报告': 'Financial Reporting',
-  '诉讼': 'Litigation',
-  '销售': 'Sales',
-  '采购': 'Procurement',
-  '存货与成本': 'Inventory & Cost',
-  '固定资产与在建工程': 'Fixed Assets & CIP',
-  '税务': 'Tax',
-  '人力资源': 'Human Resources',
-  '资金与融资': 'Treasury & Financing',
+// 业务流程：数据按英文受控词表存储，中文界面下映射为中文名称
+const BUSINESS_PROCESS_ZH: Record<string, string> = {
+  'Sales, trade receivables': '销售、应收款项',
+  'Cash and cash equivalents': '现金及现金等价物',
+  'Stock, inventory and cost of sales - standard cost': '存货、成本及销售成本（标准成本）',
+  'Property, plant and equipment': '物业、厂房及设备',
+  'Lease': '租赁',
 }
 
 // KCW active screen Status 列：数值即英文状态本身，中文界面下映射为中文名称
@@ -507,7 +487,7 @@ const DOC_REVIEW_STATUS_ZH: Record<DocReviewStatus, string> = {
   'Reviewed': '已审核',
 }
 
-const businessProcessLabel = (v: string, lang: Lang) => (lang === 'zh' ? v : BUSINESS_PROCESS_EN[v] || v)
+const businessProcessLabel = (v: string, lang: Lang) => (lang === 'zh' ? BUSINESS_PROCESS_ZH[v] ?? v : v)
 
 const reviewStatusLabel = (s: ReviewStatus, lang: Lang) => (lang === 'zh' ? REVIEW_STATUS_ZH[s] : s)
 
@@ -870,7 +850,9 @@ function CnDocsTree({
 function AuditProcedureCell({ row, onOpen }: { row: SubstWpRow; onOpen: (row: SubstWpRow) => void }) {
   const c = useCopy()
   const type = findProcedureType(row.auditProcedure.typeKey)
-  if (!type) return <span className="wps-proc-empty">—</span>
+  if (!type) return <span className="wps-proc-empty">{row.relatedSystem}</span>
+  // 无关联系统：只展示 N/A，不提供跳转
+  if (row.relatedSystem === 'N/A') return <span className="wps-proc-empty">N/A</span>
 
   const item = findProcedureItem(type, row.auditProcedure.itemCode)
   const code = item?.code ?? row.auditProcedure.itemCode
@@ -884,8 +866,7 @@ function AuditProcedureCell({ row, onOpen }: { row: SubstWpRow; onOpen: (row: Su
       <span className="wps-proc-icon" style={{ background: `${type.color}1A`, color: type.color }}>
         {procedureTypeIcon(type, 12)}
       </span>
-      <span className="wps-proc-label">{procedureTypeShortName(type)}</span>
-      <span className="wps-proc-code">{code}</span>
+      <span className="wps-proc-label">{row.relatedSystem}</span>
       <svg className="wps-proc-go" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M7 17 17 7" />
         <path d="M9 7h8v8" />
@@ -1134,6 +1115,7 @@ export function WorkPaperStationView({
     return !q ||
       r.businessProcess.toLowerCase().includes(q) ||
       r.procedureName.toLowerCase().includes(q) ||
+      r.relatedSystem.toLowerCase().includes(q) ||
       r.rmId.toLowerCase().includes(q) ||
       r.kcwActivity.toLowerCase().includes(q)
   })
@@ -1244,11 +1226,11 @@ export function WorkPaperStationView({
         </div>
       </div>
 
-      {/* ============ Section 2: Substantive Procedure Work Papers ============ */}
+      {/* ============ Section 2: Substantive Procedure Work Paper ============ */}
       <div className="wps-section">
         <div className="wps-section-header">
           <h2 className="wps-section-title">
-            <span className="wps-section-num">2</span> Substantive Procedure Work Papers
+            <span className="wps-section-num">2</span> Substantive Procedure Work Paper
           </h2>
         </div>
 

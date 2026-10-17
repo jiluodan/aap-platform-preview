@@ -473,7 +473,7 @@
   border-radius: 5px;
 }
 .wps-proc-label {
-  max-width: 110px;
+  max-width: 132px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -927,6 +927,9 @@
 
 /* SAP type badge (additional to WT / TOE) */
 .type-badge.type-sap { background: #fce7f3; color: #be185d; }
+/* 专项程序类型：Confirmation / Stocktake */
+.type-badge.type-confirmation { background: #dcfce7; color: #15803d; }
+.type-badge.type-stocktake { background: #ede9fe; color: #6d28d9; }
 
 /* =====================================================================
    Working Paper 上传弹窗（Unified File Pool View - Upload File）
