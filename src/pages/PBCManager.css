@@ -24,6 +24,14 @@
   color: #94a3b8;
 }
 
+.pbc-header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
 .pbc-header-actions {
   display: flex;
   align-items: center;
@@ -31,31 +39,43 @@
   flex-shrink: 0;
 }
 
-/* View toggle */
+/* View toggle — 分段控件，强化对比度以便用户一眼看到 */
 .pbc-view-toggle {
   display: flex;
-  gap: 0;
-  border-radius: var(--radius-md, 8px);
-  overflow: hidden;
-  border: 1px solid #e2e8f0;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid #c3d5ee;
+  background: #e9f0fa;
+  box-shadow: 0 1px 2px rgba(0, 51, 141, 0.10), inset 0 1px 2px rgba(0, 51, 141, 0.06);
+  flex-shrink: 0;
 }
 .pvt-btn {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 11px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #64748b;
-  background: #f8fafc;
+  gap: 6px;
+  padding: 6px 13px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #4a5c78;
+  background: transparent;
   border: none;
+  border-radius: 7px;
   cursor: pointer;
-  transition: all 0.15s ease;
-  border-right: 1px solid #e2e8f0;
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+  white-space: nowrap;
 }
-.pvt-btn:last-child { border-right: none; }
-.pvt-btn.active { background: #fff; color: #00338D; box-shadow: inset 0 -2px 0 #00338D; }
-.pvt-btn:not(.active):hover { background: #f1f5f9; }
+.pvt-btn:not(.active):hover {
+  background: rgba(255, 255, 255, 0.9);
+  color: #00338D;
+}
+.pvt-btn.active {
+  background: linear-gradient(180deg, #0a63cf, #00338D);
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 51, 141, 0.32);
+}
+.pvt-btn:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
 
 /* New Request button */
 .pbc-new-btn {
@@ -74,6 +94,38 @@
   white-space: nowrap;
 }
 .pbc-new-btn:hover { background: #0040a0; transform: translateY(-1px); }
+
+/* Sync to KCC button (secondary, sits next to New Request) */
+.pbc-sync-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--primary-600, #0055b8);
+  background: #fff;
+  border: 1px solid #c7d7ee;
+  border-radius: var(--radius-md, 8px);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+.pbc-sync-btn:hover:not(:disabled) {
+  background: #f4f7fd;
+  border-color: #93b4e0;
+  transform: translateY(-1px);
+}
+.pbc-sync-btn:disabled {
+  opacity: 0.7;
+  cursor: progress;
+  transform: none;
+}
+.pbc-sync-ico { flex: none; }
+.pbc-sync-ico.is-spinning { animation: pbc-sync-spin 0.9s linear infinite; }
+@keyframes pbc-sync-spin {
+  to { transform: rotate(360deg); }
+}
 
 /* ===== Stats Bar (compact inline) ===== */
 .pbc-stats-bar {

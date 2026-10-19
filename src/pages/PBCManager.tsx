@@ -294,8 +294,10 @@ const POOL_FILE_MAP: Record<string, PoolFile> = Object.fromEntries(UNCLASSIFIED_
 // ===== Component =====
 function PBCManager() {
   const { lang } = useLanguage()
-  const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards')
+  const [viewMode, setViewMode] = useState<'cards' | 'list'>('list')
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null)
+  /** Sync to KCC 按钮的同步中状态（演示用，无真实后端） */
+  const [kccSyncing, setKccSyncing] = useState(false)
 
   // Filter states (from screenshot guide)
   const [filterStatus, setFilterStatus] = useState<string>('all')
@@ -597,6 +599,17 @@ function PBCManager() {
   /** 当前筛选结果中「已匹配到文件」的条目数（含新从文件池匹配的） */
   const matchedItemCount = filteredItems.filter(i => effFile(i)).length
 
+  /** Sync to KCC：演示交互——先进入同步中，再回执本次同步的条目数 */
+  const handleSyncToKcc = () => {
+    if (kccSyncing) return
+    setKccSyncing(true)
+    showToast(t('正在同步至 KCC…', 'Syncing to KCC…'))
+    window.setTimeout(() => {
+      setKccSyncing(false)
+      showToast(t(`已同步 ${filteredItems.length} 项 PBC 至 KCC`, `Synced ${filteredItems.length} PBC items to KCC`))
+    }, 1200)
+  }
+
   // ===== File Pool 推送统计（Cards / List 两个视图共用）=====
   const poolReadyCount = poolCandidates.filter(i => !isPushed(i.id)).length
   const poolPushedCount = poolCandidates.length - poolReadyCount
@@ -760,11 +773,12 @@ function PBCManager() {
     <div className="pbc-manager animate-fade-in">
       {/* ===== Header ===== */}
       <div className="pbc-header-row">
-        <div>
-          <h1 className="pbc-title">{t('PBC 管理清单', 'PBC Management List')}</h1>
-          <span className="pbc-subtitle">{t('客户文件采集 · 分类 · 处理与推送中心', 'Client document collection · categorization · processing & push center')}</span>
-        </div>
-        <div className="pbc-header-actions">
+        <div className="pbc-header-left">
+          <div>
+            <h1 className="pbc-title">{t('PBC 管理清单', 'PBC Management List')}</h1>
+            <span className="pbc-subtitle">{t('客户文件采集 · 分类 · 处理与推送中心', 'Client document collection · categorization · processing & push center')}</span>
+          </div>
+          {/* 视图切换：移到左侧，靠近标题，便于用户发现 */}
           <div className="pbc-view-toggle">
             <button className={`pvt-btn ${viewMode === 'cards' ? 'active' : ''}`} onClick={() => setViewMode('cards')}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
@@ -775,6 +789,17 @@ function PBCManager() {
               {t('列表视图', 'List')}
             </button>
           </div>
+        </div>
+        <div className="pbc-header-actions">
+          <button className="pbc-sync-btn" onClick={handleSyncToKcc} disabled={kccSyncing} title={t('将当前 PBC 清单同步至 KCC', 'Sync current PBC list to KCC')}>
+            <svg className={`pbc-sync-ico ${kccSyncing ? 'is-spinning' : ''}`} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12a9 9 0 0 1-15.5 6.2" />
+              <path d="M3 12a9 9 0 0 1 15.5-6.2" />
+              <polyline points="21 3 21 9 15 9" />
+              <polyline points="3 21 3 15 9 15" />
+            </svg>
+            {kccSyncing ? t('同步中…', 'Syncing…') : 'Sync to KCC'}
+          </button>
           <button className="pbc-new-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             {t('新建请求', 'New Request')}
