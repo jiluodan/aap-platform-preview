@@ -1497,7 +1497,7 @@
 
 /* ——— 匹配文件列 ——— */
 .plv-file-cell { display: flex; align-items: center; gap: 5px; min-width: 0; }
-/* 匹配文件列：显示该文件已匹配的 PBC 条目数（一份文件可覆盖多个条目） */
+/* 匹配文件列：显示该条目已匹配的文件数量（可一对多）；>1 用琥珀色区分 */
 .plv-pbc-count {
   display: inline-flex;
   align-items: baseline;
@@ -1545,6 +1545,19 @@
   color: #94a3b8;
   background: #fafbfd;
   border: 1px dashed #dbe4ff;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.plv-file-builtin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #0e7490;
+  background: #ecfeff;
+  border: 1px solid #cffafe;
   border-radius: 5px;
   white-space: nowrap;
 }
@@ -2332,6 +2345,14 @@
   border-color: #c7d7fe;
   box-shadow: inset 3px 0 0 #00338D;
 }
+/* 可拖拽文件：抓手光标 + 拖拽中虚化 */
+.psr-file[draggable='true'] { cursor: grab; }
+.psr-file.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+  border-style: dashed;
+  border-color: #93a5ff;
+}
 .psr-file-ico {
   display: inline-flex;
   align-items: center;
@@ -2398,6 +2419,11 @@
   text-align: left;
 }
 .psr-cat-head:hover { background: #eef2f9; }
+/* 拖拽到分类标题：落下后匹配该分类下第一个待匹配条目 */
+.psr-cat-head.drop-target {
+  background: #e3ecff;
+  box-shadow: inset 0 0 0 1px #00338D;
+}
 .psr-caret { font-size: 9px; color: #94a3b8; transition: transform 0.15s ease; }
 .psr-cat-head.collapsed .psr-caret { transform: rotate(-90deg); }
 .psr-cat-icon { font-size: 11px; }
@@ -2433,8 +2459,45 @@
   border-radius: 5px;
   cursor: pointer;
 }
+/* 条目主体：名称 + 已匹配文件列表 */
+.psr-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.psr-item-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+/* 已匹配到该条目的文件（可多个） */
+.psr-file-chip {
+  max-width: 100%;
+  padding: 1px 6px;
+  font-size: 8.5px;
+  font-weight: 600;
+  color: #1e40af;
+  background: #eef3ff;
+  border: 1px solid #dbe4ff;
+  border-radius: 999px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+}
 .psr-item:hover { background: #f4f7ff; border-color: #e0e9ff; }
 .psr-item.is-target { background: #eef4ff; border-color: #c7d7fe; }
+/* 文件拖入时的高亮落点 */
+.psr-item.drop-target {
+  background: #e3ecff;
+  border-color: #00338D;
+  box-shadow: inset 0 0 0 1px rgba(0, 51, 141, 0.4);
+}
+.psr-item.drop-target .psr-item-dot { background: #00338D; }
+.psr-item.drop-target .psr-item-add,
+.psr-item.drop-target .psr-item-ratio { opacity: 1; color: #00338D; }
 .psr-item-dot {
   flex: 0 0 5px;
   width: 5px;
@@ -2444,7 +2507,6 @@
 }
 .psr-item.has-file .psr-item-dot { background: #10b981; }
 .psr-item-name {
-  flex: 1 1 auto;
   min-width: 0;
   font-size: 10px;
   color: #334155;
@@ -2452,7 +2514,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.psr-item-ratio { flex: 0 0 auto; font-size: 8.5px; font-weight: 700; color: #94a3b8; }
+.psr-item-ratio { flex: 0 0 auto; font-size: 8.5px; font-weight: 700; color: #94a3b8; white-space: nowrap; }
 .psr-item-ratio.full { color: #047857; }
 .psr-item-add {
   display: inline-flex;

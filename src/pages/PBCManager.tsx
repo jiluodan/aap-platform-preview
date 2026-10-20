@@ -347,8 +347,8 @@ function PBCManager() {
 
   // ===== 未分类文件 → PBC 清单 匹配（在「文件分拣」窗口内完成）=====
   const [poolIds, setPoolIds] = useState<string[]>(() => UNCLASSIFIED_FILES.map(f => f.id))
-  /** 条目 id → 从文件池匹配来的文件 id */
-  const [matches, setMatches] = useState<Record<string, string>>({})
+  /** 条目 id → 已匹配的文件 id 数组（一个条目可匹配多个文件） */
+  const [matches, setMatches] = useState<Record<string, string[]>>({})
   /** 匹配成功后条目的状态覆盖（新收到文件 → 待复核） */
   const [statusOverride, setStatusOverride] = useState<Record<string, PBCStatus>>({})
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
@@ -361,9 +361,13 @@ function PBCManager() {
   const [sorterFileId, setSorterFileId] = useState<string | null>(null)
   const [sorterFileQuery, setSorterFileQuery] = useState('')
   const [sorterCheckQuery, setSorterCheckQuery] = useState('')
-  const [sorterStatus, setSorterStatus] = useState<'all' | 'pending' | 'matched'>('all')
+  const [sorterStatus, setSorterStatus] = useState<'all' | 'pending'>('all')
   const [sorterKind, setSorterKind] = useState<'all' | PoolFile['kind']>('all')
   const [sorterCollapsed, setSorterCollapsed] = useState<Set<string>>(new Set())
+  /** 分拣窗口：正在拖拽的文件 / 当前拖入高亮的条目 */
+  const [draggingSorterFileId, setDraggingSorterFileId] = useState<string | null>(null)
+  const [sorterDropItemId, setSorterDropItemId] = useState<string | null>(null)
+  const [sorterDropCatKey, setSorterDropCatKey] = useState<string | null>(null)
 
   // ===== 清单表头按列筛选 =====
   const [colFilters, setColFilters] = useState<ColFilters>(EMPTY_COL_FILTERS)
@@ -374,11 +378,16 @@ function PBCManager() {
     toastTimer.current = window.setTimeout(() => setToast(null), 2600)
   }
 
-  /** 条目当前生效的文件：优先「从文件池匹配」的文件，其次条目自带文件 */
+  /** 条目 → 已匹配的文件 id 数组（一个条目可匹配多个文件，一份文件只属于一个条目） */
+  const matchedFileIds = (item: PBCItem): string[] => matches[item.id] || []
+
+  /** 条目当前生效的文件：优先第一个从文件池匹配的文件，其次条目自带文件 */
   const effFile = (item: PBCItem): { name: string; size?: string; kind: string; fromPool: boolean } | null => {
-    const pid = matches[item.id]
-    const pf = pid ? POOL_FILE_MAP[pid] : undefined
-    if (pf) return { name: pf.fileName, size: pf.fileSize, kind: pf.kind, fromPool: true }
+    const ids = matches[item.id]
+    if (ids && ids.length) {
+      const pf = POOL_FILE_MAP[ids[0]]
+      if (pf) return { name: pf.fileName, size: pf.fileSize, kind: pf.kind, fromPool: true }
+    }
     if (item.fileName) {
       return { name: item.fileName, size: item.fileSize, kind: (item.fileName.split('.').pop() || '').toLowerCase(), fromPool: false }
     }
@@ -388,22 +397,21 @@ function PBCManager() {
   const effStatus = (item: PBCItem): PBCStatus => statusOverride[item.id] || item.status
 
   /**
-   * 将文件池中的文件匹配到某个 PBC 条目。
-   * 同一份文件可以匹配多个条目（例如一份销售明细覆盖多个资料要求），
-   * 因此这里只替换该条目原先的文件，不影响同文件的其他匹配。
+   * 将一个未分类文件匹配到某 PBC 条目。
+   * 文件「一对一」消费：匹配后从左侧未分类列表消失（移出 poolIds），
+   * 同一份文件不会被匹配到多个条目；而一个条目可以累积多个文件。
    */
-  const assignFile = (itemId: string, poolId: string) => {
-    const f = POOL_FILE_MAP[poolId]
+  const assignFile = (itemId: string, fileId: string) => {
+    const f = POOL_FILE_MAP[fileId]
     const item = pbcItems.find(i => i.id === itemId)
     if (!f || !item) return
-    const prev = matches[itemId]
-    setMatches(m => ({ ...m, [itemId]: poolId }))
-    setPoolIds(ids => {
-      const next = new Set(ids)
-      if (prev && prev !== poolId) next.add(prev) // 替换时把原文件放回池
-      next.delete(poolId)
-      return UNCLASSIFIED_FILES.map(p => p.id).filter(id => next.has(id))
+    if (!poolIds.includes(fileId)) return // 已匹配过，忽略
+    setMatches(m => {
+      const arr = m[itemId] ? [...m[itemId]] : []
+      if (!arr.includes(fileId)) arr.push(fileId)
+      return { ...m, [itemId]: arr }
     })
+    setPoolIds(ids => ids.filter(id => id !== fileId))
     setStatusOverride(s => ({ ...s, [itemId]: 'review' }))
     setFlashId(itemId)
     window.setTimeout(() => setFlashId(cur => (cur === itemId ? null : cur)), 1100)
@@ -411,35 +419,25 @@ function PBCManager() {
                 `Matched "${f.fileName}" to "${resolveDesc(item.description, isZh)}"`))
   }
 
-  /** 取消匹配；仅当该文件不再被任何条目使用时才放回未分类文件池 */
-  const unassignFile = (itemId: string) => {
-    const pid = matches[itemId]
-    if (!pid) return
-    const stillUsed = Object.entries(matches).some(([iid, fid]) => fid === pid && iid !== itemId)
-    setMatches(m => { const n = { ...m }; delete n[itemId]; return n })
-    if (!stillUsed) {
-      setPoolIds(ids => UNCLASSIFIED_FILES.map(p => p.id).filter(id => id === pid || ids.includes(id)))
-    }
-    setStatusOverride(s => { const n = { ...s }; delete n[itemId]; return n })
-    showToast(t('已取消匹配，文件已放回未分类文件池', 'Unmatched — file returned to the pool'))
-  }
-
-  /** 解除某份文件的全部分拣结果 */
-  const unassignFileFromAll = (poolId: string) => {
-    const ids = Object.entries(matches).filter(([, fid]) => fid === poolId).map(([iid]) => iid)
-    if (ids.length === 0) return
+  /** 解除某份文件的匹配：从所属条目移除并放回未分类文件池（一份文件只属于一个条目） */
+  const unassignFile = (fileId: string) => {
+    const entry = Object.entries(matches).find(([, arr]) => arr.includes(fileId))
+    if (!entry) return
+    const [itemId] = entry
     setMatches(m => {
       const n = { ...m }
-      ids.forEach(id => delete n[id])
+      n[itemId] = (n[itemId] || []).filter(id => id !== fileId)
+      if (n[itemId].length === 0) delete n[itemId]
       return n
     })
-    setPoolIds(ids2 => UNCLASSIFIED_FILES.map(p => p.id).filter(id => id === poolId || ids2.includes(id)))
+    setPoolIds(ids => UNCLASSIFIED_FILES.map(p => p.id).filter(id => id === fileId || ids.includes(id)))
     setStatusOverride(s => {
       const n = { ...s }
-      ids.forEach(id => delete n[id])
+      const rest = (matches[itemId] || []).filter(id => id !== fileId)
+      if (rest.length === 0) delete n[itemId]
       return n
     })
-    showToast(t(`已取消该文件的 ${ids.length} 条匹配`, `Unmatched ${ids.length} checklist items`))
+    showToast(t('已取消匹配，文件已放回未分类文件池', 'Unmatched — file returned to the pool'))
   }
 
   const toggleCat = (key: string) => setCollapsedCats(prev => {
@@ -468,13 +466,6 @@ function PBCManager() {
   const sc = (key: string) => {
     const d = statusDefMap[key as PBCStatus] || PBC_STATUS_FLOW[0]
     return { label: isZh ? d.zh : d.en, color: d.color, bg: d.bg }
-  }
-
-  /** 该条目所属文件匹配到的 PBC 条目数（一份文件可覆盖多个条目） */
-  const filePbcCount = (item: PBCItem): number => {
-    const pid = matches[item.id]
-    if (pid) return Object.values(matches).filter(v => v === pid).length
-    return item.fileName ? 1 : 0
   }
 
   // --- File Pool 推送 ---
@@ -591,28 +582,27 @@ function PBCManager() {
   const matchedItemCount = filteredItems.filter(i => effFile(i)).length
 
   // ===== 文件分拣窗口：数据 =====
-  /** 文件 id → 已匹配到的条目 id 列表（一份文件可匹配多个条目） */
+  /** 文件 id → 匹配到的条目 id（一份文件只属于一个条目） */
   const fileMatchMap = useMemo(() => {
-    const map: Record<string, string[]> = {}
-    Object.entries(matches).forEach(([itemId, fileId]) => {
-      if (!map[fileId]) map[fileId] = []
-      map[fileId].push(itemId)
+    const map: Record<string, string> = {}
+    Object.entries(matches).forEach(([itemId, ids]) => {
+      ids.forEach(fid => { map[fid] = itemId })
     })
     return map
   }, [matches])
 
-  /** 左栏文件列表（按状态 / 类型 / 文件名筛选） */
+  /** 左栏文件列表：仅展示尚未匹配（仍在未分类池）的文件，匹配后即消失 */
   const sorterFiles = useMemo(() => {
     const q = sorterFileQuery.trim().toLowerCase()
-    return UNCLASSIFIED_FILES.filter(f => {
-      if (q && !f.fileName.toLowerCase().includes(q)) return false
-      const matched = (fileMatchMap[f.id]?.length ?? 0) > 0
-      if (sorterStatus === 'pending' && matched) return false
-      if (sorterStatus === 'matched' && !matched) return false
-      if (sorterKind !== 'all' && f.kind !== sorterKind) return false
-      return true
-    })
-  }, [sorterFileQuery, sorterStatus, sorterKind, fileMatchMap])
+    return poolIds
+      .map(id => POOL_FILE_MAP[id])
+      .filter(Boolean)
+      .filter(f => {
+        if (q && !f.fileName.toLowerCase().includes(q)) return false
+        if (sorterKind !== 'all' && f.kind !== sorterKind) return false
+        return true
+      })
+  }, [sorterFileQuery, sorterKind, poolIds])
 
   /** 中栏清单树：不受主列表筛选影响，展示全部 PBC 条目 */
   const sorterTree = useMemo(() => {
@@ -630,9 +620,9 @@ function PBCManager() {
   }, [sorterCheckQuery, isZh])
 
   const sorterFile = sorterFileId ? POOL_FILE_MAP[sorterFileId] : null
-  const sorterMatchedItemIds = sorterFileId ? (fileMatchMap[sorterFileId] || []) : []
-  const sorterMatchedItem = sorterMatchedItemIds.length
-    ? pbcItems.find(i => i.id === sorterMatchedItemIds[0])
+  const sorterMatchedItemId = sorterFileId ? fileMatchMap[sorterFileId] : undefined
+  const sorterMatchedItem = sorterMatchedItemId
+    ? pbcItems.find(i => i.id === sorterMatchedItemId)
     : undefined
   const sorterSuggest = sorterFile ? categoryMetaMap[suggestCategoryKey(sorterFile)] : undefined
   const sorterKeywords = sorterFile
@@ -664,6 +654,25 @@ function PBCManager() {
     const nextFileId = poolIds.find(id => id !== sorterFileId) || null
     assignFile(item.id, sorterFileId)
     setSorterFileId(nextFileId)
+  }
+
+  /** 拖拽匹配：把左侧某份文件直接放到中间条目上；匹配后该文件从左侧消失，自动切到下一个待分拣文件 */
+  const dropSorterFileOnItem = (fileId: string, item: PBCItem) => {
+    if (!POOL_FILE_MAP[fileId]) return
+    if (!poolIds.includes(fileId)) return // 已匹配过，忽略
+    assignFile(item.id, fileId)
+    const nextFileId = poolIds.find(id => id !== fileId) || null
+    setSorterFileId(nextFileId)
+  }
+
+  /** 拖到分类标题：匹配到该分类下第一个尚未匹配文件的条目 */
+  const dropSorterFileOnCategory = (fileId: string, items: PBCItem[]) => {
+    const target = items.find(i => matchedFileIds(i).length === 0)
+    if (!target) {
+      showToast(t('该分类下的条目均已匹配文件', 'All items in this category already have files'))
+      return
+    }
+    dropSorterFileOnItem(fileId, target)
   }
 
   /** Sync to KCC：演示交互——先进入同步中，再回执本次同步的条目数 */
@@ -1326,10 +1335,12 @@ function PBCManager() {
 
                         {/* 条目（子级）行 */}
                         {!collapsed && items.map(item => {
-                          const file = effFile(item)
+                          const fileIds = matchedFileIds(item)
+                          const fileCount = fileIds.length
+                          const hasBuiltin = Boolean(item.fileName)
                           const isSel = selectedIds.has(item.id)
                           const stt = effStatus(item)
-                          const pbcMatchCount = filePbcCount(item)
+                          const file = fileCount || hasBuiltin ? effFile(item) : null
                           return (
                             <tr key={item.id}
                               className={`plv-row-item ${isSel ? 'row-selected' : ''} priority-${item.priority} ${flashId === item.id ? 'row-flash' : ''}`}
@@ -1345,27 +1356,30 @@ function PBCManager() {
                                     {resolveDesc(item.description, isZh)}
                                   </span>
                                   <span className={`plv-tree-chip ${file ? 'match' : 'pending'}`}>
-                                    {file ? '1/1' : t('待补充', 'Pending')}
+                                    {file ? '✓' : t('待补充', 'Pending')}
                                   </span>
                                 </div>
                               </td>
                               <td className="plv-c-file">
-                                {file ? (
+                                {fileCount > 0 ? (
                                   <div className="plv-file-cell">
                                     <span
-                                      className={`plv-pbc-count ${pbcMatchCount > 1 ? 'multi' : ''}`}
-                                      title={`${file.name}${file.size ? ` (${file.size})` : ''} · ${t(`已匹配 ${pbcMatchCount} 个 PBC 条目`, `matched to ${pbcMatchCount} PBC items`)}`}>
-                                      <b>{pbcMatchCount}</b>
-                                      <span>PBC</span>
+                                      className={`plv-pbc-count ${fileCount > 1 ? 'multi' : ''}`}
+                                      title={`${fileCount} ${t('个文件', 'files')}：${fileIds.map(id => POOL_FILE_MAP[id]?.fileName).filter(Boolean).join(', ')}`}>
+                                      <b>{fileCount}</b>
+                                      <span>{t('文件', 'files')}</span>
                                     </span>
-                                    {file.fromPool && (
-                                      <button className="plv-file-unlink"
-                                        title={t('取消匹配，放回未分类文件池', 'Unmatch — return to pool')}
-                                        onClick={e => { e.stopPropagation(); unassignFile(item.id) }}>
-                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M9 14l-4-4 4-4"/><path d="M5 10h11a4 4 0 010 8h-1"/></svg>
-                                      </button>
-                                    )}
+                                    <button className="plv-file-unlink"
+                                      title={t('取消匹配，放回未分类文件池', 'Unmatch — return to pool')}
+                                      onClick={e => { e.stopPropagation(); fileIds.forEach(id => unassignFile(id)) }}>
+                                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M9 14l-4-4 4-4"/><path d="M5 10h11a4 4 0 010 8h-1"/></svg>
+                                    </button>
                                   </div>
+                                ) : hasBuiltin ? (
+                                  <span className="plv-file-builtin" title={item.fileName}>
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                    {t('自带文件', 'Attached')}
+                                  </span>
                                 ) : (
                                   <span className="plv-file-empty">
                                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -1504,8 +1518,8 @@ function PBCManager() {
                 </span>
                 <div>
                   <h3>{t('文件分拣', 'File Triage')}</h3>
-                  <p>{t('将已收到的文件匹配到 PBC 清单类型：左侧选文件，中间点选条目，右侧确认内容',
-                       'Match received files to PBC checklist types: pick a file, choose a row, preview the content.')}</p>
+                  <p>{t('将已收到的文件匹配到 PBC 清单类型：把左侧文件拖到中间条目，或点选条目完成匹配',
+                       'Match received files to PBC checklist types: drag a file onto a row, or click a row to match.')}</p>
                 </div>
               </div>
               <div className="psr-head-stats">
@@ -1531,7 +1545,6 @@ function PBCManager() {
                     <select value={sorterStatus} onChange={e => setSorterStatus(e.target.value as typeof sorterStatus)}>
                       <option value="all">{t('全部状态', 'All status')}</option>
                       <option value="pending">{t('待分拣', 'Pending')}</option>
-                      <option value="matched">{t('已匹配', 'Matched')}</option>
                     </select>
                     <select value={sorterKind} onChange={e => setSorterKind(e.target.value as typeof sorterKind)}>
                       <option value="all">{t('全部类型', 'All types')}</option>
@@ -1543,30 +1556,32 @@ function PBCManager() {
                   </div>
                 </div>
                 <div className="psr-file-list">
-                  {sorterFiles.map(f => {
-                    const matchedIds = fileMatchMap[f.id] || []
-                    const target = matchedIds.length ? pbcItems.find(i => i.id === matchedIds[0]) : undefined
-                    return (
+                  {sorterFiles.map(f => (
                       <button key={f.id}
-                        className={`psr-file ${sorterFileId === f.id ? 'active' : ''}`}
+                        className={`psr-file ${sorterFileId === f.id ? 'active' : ''} ${draggingSorterFileId === f.id ? 'dragging' : ''}`}
+                        draggable
+                        title={t('拖拽到中间清单条目完成匹配，或点击选中后点击条目',
+                                 'Drag onto a checklist row to match, or click to select then click a row')}
+                        onDragStart={e => {
+                          e.dataTransfer.setData('text/plain', f.id)
+                          e.dataTransfer.effectAllowed = 'copyMove'
+                          setDraggingSorterFileId(f.id)
+                          setSorterFileId(f.id)
+                        }}
+                        onDragEnd={() => {
+                          setDraggingSorterFileId(null)
+                          setSorterDropItemId(null)
+                          setSorterDropCatKey(null)
+                        }}
                         onClick={() => setSorterFileId(f.id)}>
                         <span className={`psr-file-ico ${f.kind}`}>{f.kind.slice(0, 3).toUpperCase()}</span>
                         <span className="psr-file-main">
                           <span className="psr-file-name" title={f.fileName}>{f.fileName}</span>
                           <span className="psr-file-meta">{f.fileSize} · {f.source} · {f.receivedAt}</span>
-                          {target && (
-                            <span className="psr-file-target">
-                              → {resolveDesc(target.description, isZh)}
-                              {matchedIds.length > 1 && ` +${matchedIds.length - 1}`}
-                            </span>
-                          )}
                         </span>
-                        <span className={`psr-file-tag ${target ? 'matched' : 'pending'}`}>
-                          {target ? t('已匹配', 'Matched') : t('待分拣', 'Pending')}
-                        </span>
+                        <span className="psr-file-tag pending">{t('待分拣', 'Pending')}</span>
                       </button>
-                    )
-                  })}
+                    ))}
                   {sorterFiles.length === 0 && (
                     <div className="psr-empty">{t('没有符合条件的文件', 'No files match the filters')}</div>
                   )}
@@ -1590,8 +1605,22 @@ function PBCManager() {
                     const matched = items.filter(i => effFile(i)).length
                     return (
                       <div key={cat.key} className="psr-cat">
-                        <button className={`psr-cat-head ${collapsed ? 'collapsed' : ''}`}
-                          onClick={() => toggleSorterCat(cat.key)}>
+                        <button className={`psr-cat-head ${collapsed ? 'collapsed' : ''} ${sorterDropCatKey === cat.key ? 'drop-target' : ''}`}
+                          onClick={() => toggleSorterCat(cat.key)}
+                          onDragOver={e => {
+                            if (!e.dataTransfer.types.includes('text/plain')) return
+                            e.preventDefault()
+                            e.dataTransfer.dropEffect = 'copy'
+                            setSorterDropCatKey(cur => (cur === cat.key ? cur : cat.key))
+                          }}
+                          onDragLeave={() => setSorterDropCatKey(cur => (cur === cat.key ? null : cur))}
+                          onDrop={e => {
+                            e.preventDefault()
+                            const fid = e.dataTransfer.getData('text/plain') || draggingSorterFileId
+                            setSorterDropCatKey(null)
+                            setDraggingSorterFileId(null)
+                            if (fid) dropSorterFileOnCategory(fid, items)
+                          }}>
                           <span className="psr-caret">▾</span>
                           <span className="psr-cat-icon">{cat.icon}</span>
                           <span className="psr-cat-name">{isZh ? cat.zh : cat.en}</span>
@@ -1600,15 +1629,44 @@ function PBCManager() {
                           </span>
                         </button>
                         {!collapsed && items.map(item => {
-                          const file = effFile(item)
+                          const fileIds = matchedFileIds(item)
+                          const fileCount = fileIds.length
                           return (
                             <button key={item.id}
-                              className={`psr-item ${file ? 'has-file' : ''} ${sorterMatchedItemIds.includes(item.id) ? 'is-target' : ''}`}
+                              className={`psr-item ${fileCount > 0 ? 'has-file' : ''} ${fileIds.includes(sorterFileId) ? 'is-target' : ''} ${sorterDropItemId === item.id ? 'drop-target' : ''}`}
                               onClick={() => matchSorterItem(item)}
-                              title={file ? `${t('已匹配', 'Matched')}：${file.name}` : t('点击匹配当前文件', 'Click to match selected file')}>
+                              onDragOver={e => {
+                                if (!e.dataTransfer.types.includes('text/plain')) return
+                                e.preventDefault()
+                                e.dataTransfer.dropEffect = 'copy'
+                                setSorterDropItemId(cur => (cur === item.id ? cur : item.id))
+                                setSorterDropCatKey(null)
+                              }}
+                              onDragLeave={() => setSorterDropItemId(cur => (cur === item.id ? null : cur))}
+                              onDrop={e => {
+                                e.preventDefault()
+                                const fid = e.dataTransfer.getData('text/plain') || draggingSorterFileId
+                                setSorterDropItemId(null)
+                                setDraggingSorterFileId(null)
+                                if (fid) dropSorterFileOnItem(fid, item)
+                              }}
+                              title={fileCount ? t(`已匹配 ${fileCount} 个文件`, `${fileCount} files matched`) : t('点击匹配当前文件', 'Click to match selected file')}>
                               <span className="psr-item-dot" />
-                              <span className="psr-item-name">{resolveDesc(item.description, isZh)}</span>
-                              <span className={`psr-item-ratio ${file ? 'full' : ''}`}>{file ? '1/1' : '0/1'}</span>
+                              <span className="psr-item-body">
+                                <span className="psr-item-name">{resolveDesc(item.description, isZh)}</span>
+                                {fileCount > 0 && (
+                                  <span className="psr-item-files">
+                                    {fileIds.map(id => (
+                                      <span key={id} className="psr-file-chip" title={POOL_FILE_MAP[id]?.fileName}>
+                                        {POOL_FILE_MAP[id]?.fileName}
+                                      </span>
+                                    ))}
+                                  </span>
+                                )}
+                              </span>
+                              <span className={`psr-item-ratio ${fileCount > 0 ? 'full' : ''}`}>
+                                {fileCount > 0 ? `${fileCount} 文件` : '0'}
+                              </span>
                               <span className="psr-item-add">+</span>
                             </button>
                           )
@@ -1646,13 +1704,10 @@ function PBCManager() {
                     {sorterMatchedItem && (
                       <div className="psr-match-banner">
                         <span>
-                          {sorterMatchedItemIds.length > 1
-                            ? t(`已匹配 ${sorterMatchedItemIds.length} 个条目，含「${resolveDesc(sorterMatchedItem.description, isZh)}」`,
-                                `Matched ${sorterMatchedItemIds.length} items incl. "${resolveDesc(sorterMatchedItem.description, isZh)}"`)
-                            : t(`已匹配至「${resolveDesc(sorterMatchedItem.description, isZh)}」`,
-                                `Matched to "${resolveDesc(sorterMatchedItem.description, isZh)}"`)}
+                          {t(`已匹配至「${resolveDesc(sorterMatchedItem.description, isZh)}」`,
+                             `Matched to "${resolveDesc(sorterMatchedItem.description, isZh)}"`)}
                         </span>
-                        <button onClick={() => unassignFileFromAll(sorterFile.id)}>{t('取消匹配', 'Unmatch')}</button>
+                        <button onClick={() => unassignFile(sorterFile.id)}>{t('取消匹配', 'Unmatch')}</button>
                       </div>
                     )}
                     <div className="psr-doc-canvas">
@@ -1689,8 +1744,8 @@ function PBCManager() {
 
             <div className="psr-foot">
               <span className="psr-foot-hint">
-                {t('操作顺序：左侧选文件 → 中间点选匹配条目 → 自动进入下一个待分拣文件',
-                   'Pick a file → click the matching row → moves on to the next pending file.')}
+                {t('拖拽左侧文件到中间条目即可匹配；匹配后文件从左侧移出，一个条目可接收多个文件',
+                   'Drag a file onto a checklist row to match — matched files leave the left list, and a row can hold multiple files.')}
               </span>
               <button className="psr-btn-primary" onClick={() => setShowSorter(false)}>{t('完成', 'Done')}</button>
             </div>
