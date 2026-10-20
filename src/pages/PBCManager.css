@@ -2063,15 +2063,54 @@
 .pcat-bar-track {
   flex: 1;
   min-width: 12px;
-  height: 5px;
+  height: 6px;
   border-radius: 3px;
   background: #f1f5f9;
   overflow: hidden;
 }
-.pcat-bar-fill {
+/* 条内分组：宽度按类目规模，内部再按已接收 / 未接收分段 */
+.pcat-bar-group {
+  display: flex;
   height: 100%;
   border-radius: 3px;
-  transition: width 0.5s ease;
+  overflow: hidden;
+}
+.pcat-bar-fill {
+  height: 100%;
+  transition: flex-grow 0.5s ease;
+}
+.pcat-bar-fill.received { background: #059669; }
+.pcat-bar-fill.not-received { background: #f59e0b; }
+/* 图例 + 文件合计 */
+.pcat-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px dashed #eef2f7;
+  font-size: 9.5px;
+  color: #64748b;
+}
+.pcat-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.pcat-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.pcat-legend i.received { background: #059669; }
+.pcat-legend i.not-received { background: #f59e0b; }
+.pcat-total {
+  margin-left: auto;
+  font-weight: 700;
+  color: #334155;
+  font-variant-numeric: tabular-nums;
 }
 .pcat-count {
   min-width: 16px;

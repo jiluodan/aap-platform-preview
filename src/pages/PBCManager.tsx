@@ -547,20 +547,37 @@ function PBCManager() {
 
   // Chart data
   const chartData = useMemo(() => {
-    const byCategory = CATEGORIES.map(c => ({
-      key: c.key,
-      label: isZh ? c.zh : c.en,
-      count: pbcItems.filter(i => i.category === c.key).length,
-      color: c.color,
-    })).filter(c => c.count > 0)
+    const byCategory = CATEGORIES.map(c => {
+      const items = pbcItems.filter(i => i.category === c.key)
+      const total = items.length
+      const received = items.filter(i => effStatus(i) !== 'requested').length
+      const notReceived = total - received
+      // 该类目下收到的文件总数：一个条目可能挂多个文件，一个类目可包含多个条目，
+      // 因此这里按「文件」聚合，而不是按「条目」计数（与下方 checklist 一致）。
+      const fileCount = items.reduce(
+        (n, i) => n + (matchedFileIds(i).length || (i.fileName ? 1 : 0)),
+        0,
+      )
+      return {
+        key: c.key,
+        label: isZh ? c.zh : c.en,
+        color: c.color,
+        total,
+        received,
+        notReceived,
+        fileCount,
+      }
+    }).filter(c => c.total > 0)
     return {
       // 完成率 = 已接收到的 PBC 条目 / 全部 PBC 条目
       completionRate: Math.round((stats.received / stats.total) * 100),
       byCategory,
-      // 条形按最大类别归一化，否则相对总量全部偏短、无法比较
-      maxCategoryCount: Math.max(1, ...byCategory.map(c => c.count)),
+      // 条形长度按最大类目的条目数归一化，条内再按已接收 / 未接收分段
+      maxCategoryCount: Math.max(1, ...byCategory.map(c => c.total)),
+      // 类目文件合计（= 下方 checklist 中已接收文件数之和）
+      totalFiles: byCategory.reduce((n, c) => n + c.fileCount, 0),
     }
-  }, [isZh, stats])
+  }, [isZh, stats, matches, statusOverride])
 
   // Grouped for card view
   const grouped: Record<string, PBCItem[]> = {}
@@ -874,21 +891,33 @@ function PBCManager() {
             </div>
           </div>
 
-          {/* 3 — 类别分布（紧凑多列） */}
+          {/* 3 — 类别分布：文件维度 + 已接收 / 未接收进度 */}
           <div className="pch-card pch-categories">
             <h4>{t('类别分布', 'Category Distribution')}</h4>
             <div className="pcat-grid">
               {chartData.byCategory.map(cat => (
-                <div key={cat.key} className="pcat-row" title={`${cat.label} · ${cat.count}`}>
+                <div key={cat.key} className="pcat-row"
+                  title={t(
+                    `${cat.label}：已接收文件 ${cat.fileCount} 个；条目 已接收 ${cat.received} / 未接收 ${cat.notReceived}（共 ${cat.total}）`,
+                    `${cat.label}: ${cat.fileCount} files received; ${cat.received} received / ${cat.notReceived} not received (${cat.total} items)`,
+                  )}>
                   <span className="pcat-dot" style={{ background: cat.color }} />
                   <span className="pcat-name">{cat.label}</span>
                   <div className="pcat-bar-track">
-                    <div className="pcat-bar-fill"
-                      style={{ width: `${(cat.count / chartData.maxCategoryCount) * 100}%`, background: cat.color }} />
+                    <div className="pcat-bar-group"
+                      style={{ width: `${(cat.total / chartData.maxCategoryCount) * 100}%` }}>
+                      {cat.received > 0 && <span className="pcat-bar-fill received" style={{ flexGrow: cat.received }} />}
+                      {cat.notReceived > 0 && <span className="pcat-bar-fill not-received" style={{ flexGrow: cat.notReceived }} />}
+                    </div>
                   </div>
-                  <span className="pcat-count">{cat.count}</span>
+                  <span className="pcat-count">{cat.fileCount}</span>
                 </div>
               ))}
+            </div>
+            <div className="pcat-foot">
+              <span className="pcat-legend"><i className="received" />{t('已接收', 'Received')}</span>
+              <span className="pcat-legend"><i className="not-received" />{t('未接收', 'Not Received')}</span>
+              <span className="pcat-total">{t(`合计 ${chartData.totalFiles} 个文件`, `${chartData.totalFiles} files`)}</span>
             </div>
           </div>
         </div>
