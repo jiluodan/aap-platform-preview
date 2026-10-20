@@ -6,31 +6,23 @@ import './PBCManager.css'
 
 // ===== Types =====
 /**
- * PBC 状态（三态闭环，贴合「发出请求 → 收到 → 复核接收」的实际流程）
- *   requested  待提供    审计已发出请求，客户尚未提交资料
- *   review     待复核    客户已提交，等待 / 正在进行审计复核
- *   accepted   已接收    复核通过，可归档 / 推送 DPE
- * （复核不通过的条目会退回客户，重新进入「待提供」，故不再单列 rejected / partial）
+ * PBC 内部状态（用于推导对外的「已接收 / 未接收」及「已分类 / 未分类」）
+ *   requested  未接收        审计已发出请求，客户尚未提交资料
+ *   review     已接收·未分类  客户已提交，尚未归类 / 复核
+ *   accepted   已接收·已分类  已归类并复核通过
  */
 type PBCStatus = 'requested' | 'review' | 'accepted'
 
-interface StatusDef {
-  key: PBCStatus
-  zh: string
-  en: string
-  color: string
-  bg: string
-  /** 是否仍需客户方动作（用于「待跟进」统计） */
-  clientAction?: boolean
+/** 对外展示的接收状态：PBC 清单实际只有「已接收 / 未接收」两种 */
+type ReceiveState = 'received' | 'not_received'
+
+const RECEIVE_META: Record<ReceiveState, { zh: string; en: string; color: string; bg: string }> = {
+  received:     { zh: '已接收', en: 'Received',     color: '#059669', bg: '#ECFDF5' },
+  not_received: { zh: '未接收', en: 'Not Received', color: '#D69E2E', bg: '#FFFBEB' },
 }
 
-const PBC_STATUS_FLOW: StatusDef[] = [
-  { key: 'requested', zh: '待提供', en: 'Requested', color: '#D69E2E', bg: '#FFFBEB', clientAction: true },
-  { key: 'review',    zh: '待复核', en: 'In Review', color: '#3182CE', bg: '#EBF4FF' },
-  { key: 'accepted',  zh: '已接收', en: 'Accepted',  color: '#059669', bg: '#ECFDF5' },
-]
-
-const statusDefMap = Object.fromEntries(PBC_STATUS_FLOW.map(s => [s.key, s])) as Record<PBCStatus, StatusDef>
+/** 内部三态 → 对外两态：requested → 未接收；review / accepted → 已接收 */
+const receiveOf = (s: PBCStatus): ReceiveState => (s === 'requested' ? 'not_received' : 'received')
 
 interface PBCItem {
   id: string
@@ -462,9 +454,9 @@ function PBCManager() {
   const isZh = lang === 'zh'
   const t = (zh: string, en: string) => (isZh ? zh : en)
 
-  // --- Status config ---
-  const sc = (key: string) => {
-    const d = statusDefMap[key as PBCStatus] || PBC_STATUS_FLOW[0]
+  // --- 接收状态展示配置（已接收 / 未接收）---
+  const rc = (state: ReceiveState) => {
+    const d = RECEIVE_META[state]
     return { label: isZh ? d.zh : d.en, color: d.color, bg: d.bg }
   }
 
@@ -481,7 +473,7 @@ function PBCManager() {
   // --- Computed filtered data ---
   const filteredItems = useMemo(() => {
     let items = pbcItems
-    if (filterStatus !== 'all') items = items.filter(i => i.status === filterStatus)
+    if (filterStatus !== 'all') items = items.filter(i => receiveOf(effStatus(i)) === filterStatus)
     if (filterCategory !== 'all') items = items.filter(i => i.category === filterCategory)
     if (filterSearch.trim()) {
       const q = filterSearch.toLowerCase()
@@ -503,7 +495,7 @@ function PBCManager() {
     }
     if (cf.assignee !== 'all') items = items.filter(i => (i.assignee || i.requestedBy) === cf.assignee)
     if (cf.due !== 'all') items = items.filter(i => i.dueDate === cf.due)
-    if (cf.status !== 'all') items = items.filter(i => effStatus(i) === cf.status)
+    if (cf.status !== 'all') items = items.filter(i => receiveOf(effStatus(i)) === cf.status)
     if (cf.priority !== 'all') items = items.filter(i => i.priority === cf.priority)
     if (cf.dataType !== 'all') items = items.filter(i => i.dataType === cf.dataType)
     if (cf.pool !== 'all') {
@@ -531,11 +523,21 @@ function PBCManager() {
       byStatus[i.status] += 1
       if (i.dataType === 'structured') structured += 1
     })
+    // 对外两态：已接收 = 待复核 + 已接收；未接收 = 待提供
+    const received = byStatus.review + byStatus.accepted
+    // 已接收细分：已分类 = 复核通过(accepted)；未分类 = 已收到但待归类/复核(review)
+    const classified = byStatus.accepted
+    const unclassified = byStatus.review
+    const notReceived = byStatus.requested
     return {
       total: pbcItems.length,
       byStatus,
-      /** 仍需客户方提供的条目（复核退回重提也归于此状态） */
-      followUp: byStatus.requested,
+      received,
+      classified,
+      unclassified,
+      notReceived,
+      /** 仍需客户方提供的条目（即未接收） */
+      followUp: notReceived,
       structured,
       unstructured: pbcItems.length - structured,
       /** File Pool：已获得文件、可进入推送流程的条目数 */
@@ -552,7 +554,8 @@ function PBCManager() {
       color: c.color,
     })).filter(c => c.count > 0)
     return {
-      completionRate: Math.round((stats.byStatus.accepted / stats.total) * 100),
+      // 完成率 = 已接收到的 PBC 条目 / 全部 PBC 条目
+      completionRate: Math.round((stats.received / stats.total) * 100),
       byCategory,
       // 条形按最大类别归一化，否则相对总量全部偏短、无法比较
       maxCategoryCount: Math.max(1, ...byCategory.map(c => c.count)),
@@ -821,56 +824,53 @@ function PBCManager() {
               </svg>
               <div className="pie-center">
                 <span className="pie-percent">{chartData.completionRate}%</span>
-                <span className="pie-label">{t('已接收', 'Accepted')}</span>
+                <span className="pie-label">{t('已接收', 'Received')}</span>
               </div>
             </div>
             <div className="pie-legend">
               <div className="pleg-item">
                 <span className="pleg-dot" style={{ background: '#059669' }} />
-                <span className="pleg-text">{t('已接收', 'Accepted')}</span>
-                <span className="pleg-val">{stats.byStatus.accepted}</span>
+                <span className="pleg-text">{t('已接收', 'Received')}</span>
+                <span className="pleg-val">{stats.received}</span>
               </div>
               <div className="pleg-item">
                 <span className="pleg-dot" style={{ background: '#e9eef4' }} />
-                <span className="pleg-text">{t('未完成', 'Outstanding')}</span>
-                <span className="pleg-val">{stats.total - stats.byStatus.accepted}</span>
+                <span className="pleg-text">{t('未接收', 'Not Received')}</span>
+                <span className="pleg-val">{stats.notReceived}</span>
               </div>
             </div>
           </div>
 
-          {/* 2 — 状态分布 */}
+          {/* 2 — 接收情况：已接收（含已分类 / 未分类） / 未接收 */}
           <div className="pch-card pch-status-cards">
-            <h4>{t('状态分布', 'Status Distribution')}</h4>
-            <div className="psc-grid">
-              {PBC_STATUS_FLOW.map(s => {
-                const n = stats.byStatus[s.key]
-                return (
-                  <div key={s.key} className="psc-item" style={{ borderTopColor: s.color }}
-                    title={`${isZh ? s.zh : s.en} · ${n} (${((n / stats.total) * 100).toFixed(0)}%)`}>
-                    <span className="psc-num" style={{ color: n > 0 ? s.color : '#cbd5e1' }}>{n}</span>
-                    <span className="psc-lbl">{isZh ? s.zh : s.en}</span>
-                  </div>
-                )
-              })}
-              {/* 未分类文件：已收到但尚未匹配到 PBC 条目的文件数 */}
-              <div className="psc-item" style={{ borderTopColor: '#0EA5E9' }}
-                title={t(`${poolIds.length} 个文件待分拣`, `${poolIds.length} files pending triage`)}>
-                <span className="psc-num" style={{ color: poolIds.length > 0 ? '#0EA5E9' : '#cbd5e1' }}>
-                  {poolIds.length}
+            <h4>{t('接收情况', 'Receipt Status')}</h4>
+            <div className="psc-grid psc-grid-2">
+              {/* 已接收（大类）：其下细分已分类 / 未分类 */}
+              <div className="psc-item psc-received" style={{ borderTopColor: '#059669' }}
+                title={t(`已接收 ${stats.received} 项：已分类 ${stats.classified} · 未分类 ${stats.unclassified}`,
+                         `Received ${stats.received}: classified ${stats.classified} · unclassified ${stats.unclassified}`)}>
+                <span className="psc-num" style={{ color: stats.received > 0 ? '#059669' : '#cbd5e1' }}>{stats.received}</span>
+                <span className="psc-lbl">{t('已接收', 'Received')}</span>
+                <span className="psc-sub">
+                  <span className="psc-sub-item"><i style={{ background: '#059669' }} />{t('已分类', 'Classified')} {stats.classified}</span>
+                  <span className="psc-sub-item"><i style={{ background: '#34D399' }} />{t('未分类', 'Unclassified')} {stats.unclassified}</span>
                 </span>
-                <span className="psc-lbl">{t('未分类文件', 'Unfiled')}</span>
+              </div>
+              {/* 未接收（大类） */}
+              <div className="psc-item" style={{ borderTopColor: '#D69E2E' }}
+                title={t(`未接收 ${stats.notReceived} 项`, `Not received ${stats.notReceived}`)}>
+                <span className="psc-num" style={{ color: stats.notReceived > 0 ? '#D69E2E' : '#cbd5e1' }}>{stats.notReceived}</span>
+                <span className="psc-lbl">{t('未接收', 'Not Received')}</span>
               </div>
             </div>
             <div className="psc-stack">
-              {PBC_STATUS_FLOW.map(s => (
-                stats.byStatus[s.key] > 0
-                  ? <span key={s.key} className="psc-seg" style={{ flexGrow: stats.byStatus[s.key], background: s.color }} />
-                  : null
-              ))}
+              {stats.classified > 0 && <span className="psc-seg" style={{ flexGrow: stats.classified, background: '#059669' }} />}
+              {stats.unclassified > 0 && <span className="psc-seg" style={{ flexGrow: stats.unclassified, background: '#34D399' }} />}
+              {stats.notReceived > 0 && <span className="psc-seg" style={{ flexGrow: stats.notReceived, background: '#D69E2E' }} />}
             </div>
             <div className="psc-foot">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
-              {t(`${stats.followUp} 项待客户提供`, `${stats.followUp} awaiting client submission`)}
+              {t(`${stats.notReceived} 项未接收，待客户提供`, `${stats.notReceived} not received, awaiting client`)}
             </div>
           </div>
 
@@ -902,11 +902,8 @@ function PBCManager() {
             <label>{t('状态筛选', 'Status')}</label>
             <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
               <option value="all">{t('全部状态', 'All Statuses')}</option>
-              {PBC_STATUS_FLOW.map(s => (
-                <option key={s.key} value={s.key}>
-                  {isZh ? s.zh : s.en} ({stats.byStatus[s.key]})
-                </option>
-              ))}
+              <option value="received">{t('已接收', 'Received')} ({stats.received})</option>
+              <option value="not_received">{t('未接收', 'Not Received')} ({stats.notReceived})</option>
             </select>
           </div>
           {/* Category filter */}
@@ -935,7 +932,7 @@ function PBCManager() {
           {t(`筛选结果：${filteredItems.length} 条 PBC`, `Filtered: ${filteredItems.length} PBC items`)}
           {(filterStatus !== 'all' || filterCategory !== 'all' || filterSearch.trim()) && (
             <span className="pfs-active-tags">
-              {filterStatus !== 'all' && <span className="pfs-tag">{sc(filterStatus).label}<button onClick={() => setFilterStatus('all')}>×</button></span>}
+              {filterStatus !== 'all' && <span className="pfs-tag">{rc(filterStatus as ReceiveState).label}<button onClick={() => setFilterStatus('all')}>×</button></span>}
               {filterCategory !== 'all' && <span className="pfs-tag">{getCategoryLabel(filterCategory, isZh)}<button onClick={() => setFilterCategory('all')}>×</button></span>}
               {filterSearch.trim() && <span className="pfs-tag">"{filterSearch}"<button onClick={() => setFilterSearch('')}>×</button></span>}
             </span>
@@ -1077,8 +1074,8 @@ function PBCManager() {
                     <div key={item.id} className={`pbc-card-item priority-${item.priority}`}>
                       <div className="pbc-card-item-top">
                         <p className="pbc-card-desc">{resolveDesc(item.description, isZh)}</p>
-                        <span className="pbc-status" style={{ background: sc(item.status).bg, color: sc(item.status).color }}>
-                          {sc(item.status).label}
+                        <span className="pbc-status" style={{ background: rc(receiveOf(item.status)).bg, color: rc(receiveOf(item.status)).color }}>
+                          {rc(receiveOf(item.status)).label}
                         </span>
                       </div>
                       <div className="pbc-card-item-bottom">
@@ -1239,9 +1236,8 @@ function PBCManager() {
                         <select className="plv-col-select" value={colFilters.status}
                           onChange={e => setColFilters(f => ({ ...f, status: e.target.value }))}>
                           <option value="all">{t('全部', 'All')}</option>
-                          {PBC_STATUS_FLOW.map(s => (
-                            <option key={s.key} value={s.key}>{isZh ? s.zh : s.en}</option>
-                          ))}
+                          <option value="received">{t('已接收', 'Received')}</option>
+                          <option value="not_received">{t('未接收', 'Not Received')}</option>
                         </select>
                       </div>
                     </th>
@@ -1289,8 +1285,8 @@ function PBCManager() {
                     const matched = items.filter(i => effFile(i)).length
                     const catSelected = items.every(i => selectedIds.has(i.id))
                     const dtype = categoryDataType(items)
-                    const dist: Record<PBCStatus, number> = { accepted: 0, review: 0, requested: 0 }
-                    items.forEach(i => { dist[effStatus(i)] += 1 })
+                    const dist: Record<ReceiveState, number> = { received: 0, not_received: 0 }
+                    items.forEach(i => { dist[receiveOf(effStatus(i))] += 1 })
                     return (
                       <Fragment key={cat.key}>
                         {/* 大类（父级）行 */}
@@ -1316,11 +1312,10 @@ function PBCManager() {
                           <td></td>
                           <td>
                             <span className="plv-band-stack"
-                              title={t(`已接收 ${dist.accepted} · 待复核 ${dist.review} · 待提供 ${dist.requested}`,
-                                       `Accepted ${dist.accepted} · In review ${dist.review} · Requested ${dist.requested}`)}>
-                              {dist.accepted > 0 && <i style={{ flexGrow: dist.accepted, background: '#059669' }} />}
-                              {dist.review > 0 && <i style={{ flexGrow: dist.review, background: '#3182CE' }} />}
-                              {dist.requested > 0 && <i style={{ flexGrow: dist.requested, background: '#D69E2E' }} />}
+                              title={t(`已接收 ${dist.received} · 未接收 ${dist.not_received}`,
+                                       `Received ${dist.received} · Not received ${dist.not_received}`)}>
+                              {dist.received > 0 && <i style={{ flexGrow: dist.received, background: '#059669' }} />}
+                              {dist.not_received > 0 && <i style={{ flexGrow: dist.not_received, background: '#D69E2E' }} />}
                             </span>
                           </td>
                           <td></td>
@@ -1390,8 +1385,8 @@ function PBCManager() {
                               <td>{item.assignee || item.requestedBy}</td>
                               <td>{item.dueDate}</td>
                               <td>
-                                <span className="pbc-status" style={{ background: sc(stt).bg, color: sc(stt).color }}>
-                                  {sc(stt).label}
+                                <span className="pbc-status" style={{ background: rc(receiveOf(stt)).bg, color: rc(receiveOf(stt)).color }}>
+                                  {rc(receiveOf(stt)).label}
                                 </span>
                               </td>
                               <td>
@@ -1471,7 +1466,7 @@ function PBCManager() {
                       <div key={item.id} className={`pbc-card-item priority-${item.priority}`}>
                         <div className="pbc-card-item-top">
                           <p className="pbc-card-desc">{resolveDesc(item.description, isZh)}</p>
-                          <span className="pbc-status" style={{ background: sc(item.status).bg, color: sc(item.status).color }}>{sc(item.status).label}</span>
+                          <span className="pbc-status" style={{ background: rc(receiveOf(item.status)).bg, color: rc(receiveOf(item.status)).color }}>{rc(receiveOf(item.status)).label}</span>
                         </div>
                         <div className="pbc-card-item-bottom">
                           <div className="pbc-card-dates">

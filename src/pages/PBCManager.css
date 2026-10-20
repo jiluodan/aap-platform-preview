@@ -1960,6 +1960,31 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
 }
+/* 接收情况：只有「已接收 / 未接收」两个大类 */
+.psc-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* 已接收下的「已分类 / 未分类」细分 */
+.psc-sub {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-top: 5px;
+}
+.psc-sub-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 8.5px;
+  font-weight: 600;
+  color: #64748b;
+  white-space: nowrap;
+}
+.psc-sub-item i {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
 .psc-item {
   padding: 7px 3px 6px;
   border-radius: 7px;
@@ -2092,6 +2117,7 @@
   .pch-grid { grid-template-columns: 1fr; }
   .pch-pie, .pch-categories { grid-column: auto; }
   .psc-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .psc-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pcat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pcat-name { flex-basis: 88px; }
   .pch-head-meta { display: none; }
