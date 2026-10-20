@@ -2472,21 +2472,41 @@
   flex-wrap: wrap;
   gap: 3px;
 }
-/* 已匹配到该条目的文件（可多个） */
+/* 已匹配到该条目的文件（可多个，支持点击 × 取消匹配退回左侧） */
 .psr-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   max-width: 100%;
-  padding: 1px 6px;
+  padding: 1px 3px 1px 6px;
   font-size: 8.5px;
   font-weight: 600;
   color: #1e40af;
   background: #eef3ff;
   border: 1px solid #dbe4ff;
   border-radius: 999px;
+}
+.psr-file-chip-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.psr-file-chip-del {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  font-size: 11px;
+  line-height: 1;
+  color: #64748b;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
 }
+.psr-file-chip-del:hover { color: #b42318; background: #fee4e2; }
 .psr-item:hover { background: #f4f7ff; border-color: #e0e9ff; }
 .psr-item.is-target { background: #eef4ff; border-color: #c7d7fe; }
 /* 文件拖入时的高亮落点 */

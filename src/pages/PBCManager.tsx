@@ -1657,8 +1657,19 @@ function PBCManager() {
                                 {fileCount > 0 && (
                                   <span className="psr-item-files">
                                     {fileIds.map(id => (
-                                      <span key={id} className="psr-file-chip" title={POOL_FILE_MAP[id]?.fileName}>
-                                        {POOL_FILE_MAP[id]?.fileName}
+                                      <span key={id} className="psr-file-chip">
+                                        <span className="psr-file-chip-name" title={POOL_FILE_MAP[id]?.fileName}>
+                                          {POOL_FILE_MAP[id]?.fileName}
+                                        </span>
+                                        <span
+                                          className="psr-file-chip-del"
+                                          role="button"
+                                          tabIndex={0}
+                                          title={t('取消匹配，退回左侧列表', 'Unmatch — return to the left list')}
+                                          onClick={e => { e.stopPropagation(); unassignFile(id) }}
+                                          onKeyDown={e => {
+                                            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); unassignFile(id) }
+                                          }}>×</span>
                                       </span>
                                     ))}
                                   </span>
