@@ -114,14 +114,26 @@ type PoolPreview =
   | { type: 'table'; headers: string[]; rows: string[][]; note: string }
   | { type: 'text'; lines: string[]; note: string }
 
-/** 预览浮层所需的数据（右侧文件池 / 左侧已匹配文件 共用） */
-type PreviewCardData = {
-  fileName: string
-  fileSize?: string
-  kind: string
-  /** 副标题：大小 · 来源 · 日期 */
-  meta: string
-  preview: PoolPreview
+/** 清单表头的按列筛选条件 */
+type ColFilters = {
+  tree: string
+  file: 'all' | 'matched' | 'pending'
+  assignee: string
+  due: string
+  status: string
+  priority: string
+  dataType: string
+  pool: 'all' | 'pushed' | 'pending'
+}
+const EMPTY_COL_FILTERS: ColFilters = {
+  tree: '',
+  file: 'all',
+  assignee: 'all',
+  due: 'all',
+  status: 'all',
+  priority: 'all',
+  dataType: 'all',
+  pool: 'all',
 }
 
 interface PoolFile {
@@ -291,6 +303,22 @@ const UNCLASSIFIED_FILES: PoolFile[] = [
 
 const POOL_FILE_MAP: Record<string, PoolFile> = Object.fromEntries(UNCLASSIFIED_FILES.map(f => [f.id, f]))
 
+/** 文件名关键词 → 建议匹配的 PBC 大类（用于「AI 建议」提示，仅演示） */
+const SUGGEST_RULES: [RegExp, string][] = [
+  [/销售|收入|发票/, 'revenue'],
+  [/应收|账龄/, 'ar'],
+  [/采购|订单|供应商/, 'purchase'],
+  [/银行|对账|流水/, 'cash'],
+  [/存货|盘点/, 'inventory'],
+  [/薪资|工资/, 'payroll'],
+  [/固定资|台账/, 'fixedasset'],
+  [/增值税|申报|税/, 'tax'],
+  [/租赁|合同/, 'lease'],
+  [/董事会|决议/, 'general'],
+]
+const suggestCategoryKey = (f: PoolFile): string =>
+  SUGGEST_RULES.find(([re]) => re.test(f.fileName))?.[1] || 'general'
+
 // ===== Component =====
 function PBCManager() {
   const { lang } = useLanguage()
@@ -317,80 +345,28 @@ function PBCManager() {
     () => new Set(poolCandidates.filter(i => i.status === 'accepted').map(i => i.id)),
   )
 
-  // ===== 未分类文件 → PBC 清单 匹配（拖拽 / 点击）=====
+  // ===== 未分类文件 → PBC 清单 匹配（在「文件分拣」窗口内完成）=====
   const [poolIds, setPoolIds] = useState<string[]>(() => UNCLASSIFIED_FILES.map(f => f.id))
   /** 条目 id → 从文件池匹配来的文件 id */
   const [matches, setMatches] = useState<Record<string, string>>({})
   /** 匹配成功后条目的状态覆盖（新收到文件 → 待复核） */
   const [statusOverride, setStatusOverride] = useState<Record<string, PBCStatus>>({})
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set())
-  const [draggingPoolId, setDraggingPoolId] = useState<string | null>(null)
-  const [dragOverId, setDragOverId] = useState<string | null>(null)
-  const [poolDropActive, setPoolDropActive] = useState(false)
-  const [pickedPoolId, setPickedPoolId] = useState<string | null>(null)
   const [flashId, setFlashId] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<number | null>(null)
 
-  // ===== 未分类文件「部分内容预览」=====
-  const [previewFileId, setPreviewFileId] = useState<string | null>(null)
-  /** 预览浮层相对右栏顶部的偏移，使浮层与所点条目对齐 */
-  const [previewTop, setPreviewTop] = useState(0)
-  const rightPanelRef = useRef<HTMLElement | null>(null)
+  // ===== 文件分拣窗口 =====
+  const [showSorter, setShowSorter] = useState(false)
+  const [sorterFileId, setSorterFileId] = useState<string | null>(null)
+  const [sorterFileQuery, setSorterFileQuery] = useState('')
+  const [sorterCheckQuery, setSorterCheckQuery] = useState('')
+  const [sorterStatus, setSorterStatus] = useState<'all' | 'pending' | 'matched'>('all')
+  const [sorterKind, setSorterKind] = useState<'all' | PoolFile['kind']>('all')
+  const [sorterCollapsed, setSorterCollapsed] = useState<Set<string>>(new Set())
 
-  // ===== 左侧清单「已匹配文件」部分内容预览 =====
-  /** 正在预览的条目 id + 浮层相对左栏的偏移（由所点眼睛按钮计算） */
-  const [rowPreview, setRowPreview] = useState<{ itemId: string; top: number; left: number } | null>(null)
-  const leftPanelRef = useRef<HTMLDivElement | null>(null)
-
-  /** 打开 / 切换某文件的部分内容预览（浮层出现在该条目左侧） */
-  const openFilePreview = (e: React.MouseEvent<HTMLButtonElement>, f: PoolFile) => {
-    e.stopPropagation()
-    if (previewFileId === f.id) { setPreviewFileId(null); return }
-    const itemEl = e.currentTarget.closest('.plv-pool-item') as HTMLElement | null
-    const panel = rightPanelRef.current
-    if (itemEl && panel) {
-      const ir = itemEl.getBoundingClientRect()
-      const pr = panel.getBoundingClientRect()
-      const POP_H = 300
-      // 以 .plv-right 为定位基准，同时把浮层钳制在视口内（允许向上溢出到清单区域）
-      const minTop = 8 - pr.top
-      const maxTop = window.innerHeight - POP_H - 8 - pr.top
-      setPreviewTop(Math.max(minTop, Math.min(ir.top - pr.top - 4, Math.max(minTop, maxTop))))
-    } else {
-      setPreviewTop(0)
-    }
-    setPreviewFileId(f.id)
-  }
-
-  /**
-   * 打开 / 切换某条目「已匹配文件」的部分内容预览。
-   * 浮层出现在该行文件列右侧，并钳制在左栏宽度内，避免压住右侧文件池。
-   */
-  const openRowPreview = (e: React.MouseEvent<HTMLButtonElement>, itemId: string) => {
-    e.stopPropagation()
-    if (rowPreview?.itemId === itemId) { setRowPreview(null); return }
-    const btn = e.currentTarget
-    const panel = leftPanelRef.current
-    if (btn && panel) {
-      const br = btn.getBoundingClientRect()
-      const pr = panel.getBoundingClientRect()
-      const POP_W = 348
-      const POP_H = 300
-      const maxLeft = pr.width - POP_W - 6
-      const minTop = 8 - pr.top
-      const maxTop = window.innerHeight - POP_H - 8 - pr.top
-      setRowPreview({
-        itemId,
-        left: Math.max(6, Math.min(br.right - pr.left + 10, Math.max(6, maxLeft))),
-        top: Math.max(minTop, Math.min(br.top - pr.top - 4, Math.max(minTop, maxTop))),
-      })
-    } else {
-      setRowPreview({ itemId, left: 6, top: 0 })
-    }
-  }
-
-  const pool = useMemo(() => UNCLASSIFIED_FILES.filter(f => poolIds.includes(f.id)), [poolIds])
+  // ===== 清单表头按列筛选 =====
+  const [colFilters, setColFilters] = useState<ColFilters>(EMPTY_COL_FILTERS)
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -411,7 +387,11 @@ function PBCManager() {
 
   const effStatus = (item: PBCItem): PBCStatus => statusOverride[item.id] || item.status
 
-  /** 将文件池中的文件匹配到某个 PBC 条目 */
+  /**
+   * 将文件池中的文件匹配到某个 PBC 条目。
+   * 同一份文件可以匹配多个条目（例如一份销售明细覆盖多个资料要求），
+   * 因此这里只替换该条目原先的文件，不影响同文件的其他匹配。
+   */
   const assignFile = (itemId: string, poolId: string) => {
     const f = POOL_FILE_MAP[poolId]
     const item = pbcItems.find(i => i.id === itemId)
@@ -425,22 +405,41 @@ function PBCManager() {
       return UNCLASSIFIED_FILES.map(p => p.id).filter(id => next.has(id))
     })
     setStatusOverride(s => ({ ...s, [itemId]: 'review' }))
-    setRowPreview(null) // 文件发生变化，关闭旧的预览浮层
     setFlashId(itemId)
     window.setTimeout(() => setFlashId(cur => (cur === itemId ? null : cur)), 1100)
     showToast(t(`已将「${f.fileName}」匹配到「${resolveDesc(item.description, isZh)}」`,
                 `Matched "${f.fileName}" to "${resolveDesc(item.description, isZh)}"`))
   }
 
-  /** 取消匹配，把文件放回未分类文件池 */
+  /** 取消匹配；仅当该文件不再被任何条目使用时才放回未分类文件池 */
   const unassignFile = (itemId: string) => {
     const pid = matches[itemId]
     if (!pid) return
+    const stillUsed = Object.entries(matches).some(([iid, fid]) => fid === pid && iid !== itemId)
     setMatches(m => { const n = { ...m }; delete n[itemId]; return n })
-    setPoolIds(ids => UNCLASSIFIED_FILES.map(p => p.id).filter(id => id === pid || ids.includes(id)))
+    if (!stillUsed) {
+      setPoolIds(ids => UNCLASSIFIED_FILES.map(p => p.id).filter(id => id === pid || ids.includes(id)))
+    }
     setStatusOverride(s => { const n = { ...s }; delete n[itemId]; return n })
-    setRowPreview(null) // 文件发生变化，关闭旧的预览浮层
     showToast(t('已取消匹配，文件已放回未分类文件池', 'Unmatched — file returned to the pool'))
+  }
+
+  /** 解除某份文件的全部分拣结果 */
+  const unassignFileFromAll = (poolId: string) => {
+    const ids = Object.entries(matches).filter(([, fid]) => fid === poolId).map(([iid]) => iid)
+    if (ids.length === 0) return
+    setMatches(m => {
+      const n = { ...m }
+      ids.forEach(id => delete n[id])
+      return n
+    })
+    setPoolIds(ids2 => UNCLASSIFIED_FILES.map(p => p.id).filter(id => id === poolId || ids2.includes(id)))
+    setStatusOverride(s => {
+      const n = { ...s }
+      ids.forEach(id => delete n[id])
+      return n
+    })
+    showToast(t(`已取消该文件的 ${ids.length} 条匹配`, `Unmatched ${ids.length} checklist items`))
   }
 
   const toggleCat = (key: string) => setCollapsedCats(prev => {
@@ -471,48 +470,11 @@ function PBCManager() {
     return { label: isZh ? d.zh : d.en, color: d.color, bg: d.bg }
   }
 
-  /**
-   * 条目「已匹配文件」的预览内容：
-   * 来自文件池的文件沿用其预置的部分内容；条目自带文件（演示数据）没有正文，
-   * 按条目信息生成一份文件摘要，便于快速识别。
-   */
-  const rowFilePreview = (item: PBCItem): PreviewCardData | null => {
-    const file = effFile(item)
-    if (!file) return null
-    const poolId = matches[item.id]
-    const pf = poolId ? POOL_FILE_MAP[poolId] : undefined
-    if (pf) {
-      return {
-        fileName: pf.fileName,
-        fileSize: pf.fileSize,
-        kind: pf.kind,
-        meta: `${pf.fileSize} · ${pf.source} · ${pf.receivedAt}`,
-        preview: pf.preview,
-      }
-    }
-    const cat = categoryMetaMap[item.category]
-    const lines = [
-      `${t('文件名', 'File')}：${file.name}`,
-      `${t('大小', 'Size')}：${file.size || '—'}　${t('类型', 'Type')}：${file.kind.toUpperCase()}`,
-      `${t('所属条目', 'Item')}：${resolveDesc(item.description, isZh)}`,
-      `${t('所属大类', 'Category')}：${cat ? (isZh ? cat.zh : cat.en) : item.category}`,
-      `${t('状态', 'Status')}：${sc(effStatus(item)).label}`,
-      `${t('负责人', 'Assignee')}：${item.assignee || item.requestedBy}　${t('截止', 'Due')}：${item.dueDate}`,
-      '',
-      t('演示环境未接入文件正文，此处展示文件识别信息。',
-        'No file body in this demo — identification info only.'),
-    ]
-    return {
-      fileName: file.name,
-      fileSize: file.size,
-      kind: file.kind,
-      meta: `${file.size || '—'} · ${t('条目自带文件', 'Item file')}`,
-      preview: {
-        type: 'text',
-        lines,
-        note: t('文件摘要 · 原型演示', 'File summary · prototype demo'),
-      },
-    }
+  /** 该条目所属文件匹配到的 PBC 条目数（一份文件可覆盖多个条目） */
+  const filePbcCount = (item: PBCItem): number => {
+    const pid = matches[item.id]
+    if (pid) return Object.values(matches).filter(v => v === pid).length
+    return item.fileName ? 1 : 0
   }
 
   // --- File Pool 推送 ---
@@ -538,8 +500,37 @@ function PBCManager() {
         i.requestedBy.toLowerCase().includes(q)
       )
     }
+
+    // ===== 表头按列筛选 =====
+    const cf = colFilters
+    if (cf.tree.trim()) {
+      const q = cf.tree.trim().toLowerCase()
+      items = items.filter(i => resolveDesc(i.description, isZh).toLowerCase().includes(q))
+    }
+    if (cf.file !== 'all') {
+      items = items.filter(i => (cf.file === 'matched' ? Boolean(effFile(i)) : !effFile(i)))
+    }
+    if (cf.assignee !== 'all') items = items.filter(i => (i.assignee || i.requestedBy) === cf.assignee)
+    if (cf.due !== 'all') items = items.filter(i => i.dueDate === cf.due)
+    if (cf.status !== 'all') items = items.filter(i => effStatus(i) === cf.status)
+    if (cf.priority !== 'all') items = items.filter(i => i.priority === cf.priority)
+    if (cf.dataType !== 'all') items = items.filter(i => i.dataType === cf.dataType)
+    if (cf.pool !== 'all') {
+      items = items.filter(i => (cf.pool === 'pushed' ? isPushed(i.id) : !isPushed(i.id)))
+    }
     return items
-  }, [filterStatus, filterCategory, filterSearch, isZh])
+  }, [filterStatus, filterCategory, filterSearch, isZh, colFilters, matches, statusOverride, pushedIds])
+
+  /** 表头筛选可选值 */
+  const colOptions = useMemo(() => ({
+    assignees: Array.from(new Set(pbcItems.map(i => i.assignee || i.requestedBy))).sort(),
+    dues: Array.from(new Set(pbcItems.map(i => i.dueDate))).sort(),
+  }), [])
+
+  const hasColFilters = colFilters.tree.trim() !== '' ||
+    colFilters.file !== 'all' || colFilters.assignee !== 'all' || colFilters.due !== 'all' ||
+    colFilters.status !== 'all' || colFilters.priority !== 'all' ||
+    colFilters.dataType !== 'all' || colFilters.pool !== 'all'
 
   // Stats
   const stats = useMemo(() => {
@@ -599,6 +590,82 @@ function PBCManager() {
   /** 当前筛选结果中「已匹配到文件」的条目数（含新从文件池匹配的） */
   const matchedItemCount = filteredItems.filter(i => effFile(i)).length
 
+  // ===== 文件分拣窗口：数据 =====
+  /** 文件 id → 已匹配到的条目 id 列表（一份文件可匹配多个条目） */
+  const fileMatchMap = useMemo(() => {
+    const map: Record<string, string[]> = {}
+    Object.entries(matches).forEach(([itemId, fileId]) => {
+      if (!map[fileId]) map[fileId] = []
+      map[fileId].push(itemId)
+    })
+    return map
+  }, [matches])
+
+  /** 左栏文件列表（按状态 / 类型 / 文件名筛选） */
+  const sorterFiles = useMemo(() => {
+    const q = sorterFileQuery.trim().toLowerCase()
+    return UNCLASSIFIED_FILES.filter(f => {
+      if (q && !f.fileName.toLowerCase().includes(q)) return false
+      const matched = (fileMatchMap[f.id]?.length ?? 0) > 0
+      if (sorterStatus === 'pending' && matched) return false
+      if (sorterStatus === 'matched' && !matched) return false
+      if (sorterKind !== 'all' && f.kind !== sorterKind) return false
+      return true
+    })
+  }, [sorterFileQuery, sorterStatus, sorterKind, fileMatchMap])
+
+  /** 中栏清单树：不受主列表筛选影响，展示全部 PBC 条目 */
+  const sorterTree = useMemo(() => {
+    const q = sorterCheckQuery.trim().toLowerCase()
+    const byCat: Record<string, PBCItem[]> = {}
+    pbcItems.forEach(i => {
+      const hay = `${resolveDesc(i.description, isZh)} ${getCategoryLabel(i.category, isZh)}`.toLowerCase()
+      if (q && !hay.includes(q)) return
+      if (!byCat[i.category]) byCat[i.category] = []
+      byCat[i.category].push(i)
+    })
+    return CATEGORIES
+      .filter(c => byCat[c.key] && byCat[c.key].length > 0)
+      .map(c => ({ cat: c, items: byCat[c.key] }))
+  }, [sorterCheckQuery, isZh])
+
+  const sorterFile = sorterFileId ? POOL_FILE_MAP[sorterFileId] : null
+  const sorterMatchedItemIds = sorterFileId ? (fileMatchMap[sorterFileId] || []) : []
+  const sorterMatchedItem = sorterMatchedItemIds.length
+    ? pbcItems.find(i => i.id === sorterMatchedItemIds[0])
+    : undefined
+  const sorterSuggest = sorterFile ? categoryMetaMap[suggestCategoryKey(sorterFile)] : undefined
+  const sorterKeywords = sorterFile
+    ? sorterFile.fileName.replace(/\.[^.]+$/, '').split(/[_\-\s]+/).filter(Boolean).slice(0, 3)
+    : []
+  const allMatchedCount = pbcItems.filter(i => effFile(i)).length
+
+  const openSorter = () => {
+    setSorterFileId(poolIds[0] || UNCLASSIFIED_FILES[0]?.id || null)
+    setSorterFileQuery('')
+    setSorterCheckQuery('')
+    setSorterStatus('all')
+    setSorterKind('all')
+    setShowSorter(true)
+  }
+
+  const toggleSorterCat = (key: string) => setSorterCollapsed(prev => {
+    const next = new Set(prev)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    return next
+  })
+
+  /** 在分拣窗口内把当前选中文件匹配到某条目，并自动跳到下一个待分拣文件 */
+  const matchSorterItem = (item: PBCItem) => {
+    if (!sorterFileId) {
+      showToast(t('请先在左侧选择一个文件', 'Select a file on the left first'))
+      return
+    }
+    const nextFileId = poolIds.find(id => id !== sorterFileId) || null
+    assignFile(item.id, sorterFileId)
+    setSorterFileId(nextFileId)
+  }
+
   /** Sync to KCC：演示交互——先进入同步中，再回执本次同步的条目数 */
   const handleSyncToKcc = () => {
     if (kccSyncing) return
@@ -626,29 +693,6 @@ function PBCManager() {
     else pushAllReady()
   }
 
-  /**
-   * 打开 PBC 条目对应的文件。
-   * 演示环境没有真实文件存储，这里生成一份占位文档在新标签页打开，
-   * 以便完整呈现「点击图标 → 打开该文件」的交互。
-   */
-  const openFile = (fileName: string, fileSize?: string) => {
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${fileName}</title></head>
-<body style="margin:0;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#1e293b">
-  <div style="max-width:720px;margin:64px auto;padding:0 24px">
-    <div style="display:flex;align-items:center;gap:10px">
-      <span style="display:inline-flex;width:34px;height:34px;align-items:center;justify-content:center;border-radius:8px;background:#eef2ff;color:#00338D;font-size:16px">&#128196;</span>
-      <h1 style="font-size:17px;margin:0;word-break:break-all">${fileName}</h1>
-    </div>
-    <p style="color:#64748b;font-size:13px;margin:14px 0 22px">${fileSize ? fileSize + ' · ' : ''}${t('演示文件预览', 'Demo file preview')}</p>
-    <div style="border:1px dashed #cbd5e1;border-radius:10px;padding:28px;text-align:center;color:#94a3b8;font-size:13px">
-      ${t('此处为文件占位内容（原型演示）', 'Placeholder content (prototype demo)')}
-    </div>
-  </div>
-</body></html>`
-    const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
-    window.open(url, '_blank', 'noopener')
-  }
-
   // --- Handlers ---
   const handleCardClick = (category: string) => {
     setExpandedCategory(expandedCategory === category ? null : category)
@@ -674,8 +718,11 @@ function PBCManager() {
     setFilterStatus('all')
     setFilterCategory('all')
     setFilterSearch('')
+    setColFilters(EMPTY_COL_FILTERS)
     setSelectedIds(new Set())
   }
+
+  const clearColFilters = () => setColFilters(EMPTY_COL_FILTERS)
 
   const applyBatchEdit = () => {
     // In real app this would call API
@@ -692,81 +739,11 @@ function PBCManager() {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       setExpandedCategory(null)
-      setPreviewFileId(null)
-      setRowPreview(null)
+      setShowSorter(false)
     }
     window.addEventListener('keydown', handleEsc)
     return () => window.removeEventListener('keydown', handleEsc)
   }, [])
-
-  // 点击浮层/预览按钮以外的区域、或滚动页面 → 关闭预览
-  useEffect(() => {
-    if (!previewFileId && !rowPreview) return
-    const onDown = (e: MouseEvent) => {
-      const el = e.target as HTMLElement
-      if (el.closest('.plv-preview-pop') || el.closest('.plvi-preview-btn') || el.closest('.plv-file-eye')) return
-      setPreviewFileId(null)
-      setRowPreview(null)
-    }
-    const onScroll = () => { setPreviewFileId(null); setRowPreview(null) }
-    document.addEventListener('mousedown', onDown)
-    window.addEventListener('scroll', onScroll, true)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      window.removeEventListener('scroll', onScroll, true)
-    }
-  }, [previewFileId, rowPreview])
-
-  /** 文件部分内容预览浮层（右侧文件池 / 左侧已匹配文件 共用） */
-  const renderPreviewCard = (
-    data: PreviewCardData,
-    onClose: () => void,
-    position?: { style?: React.CSSProperties; className?: string },
-  ) => (
-    <div className={`plv-preview-pop ${position?.className || ''}`} style={position?.style} role="dialog"
-      aria-label={t('文件预览', 'File preview')}>
-      <div className="plvp-pop-head">
-        <span className={`plvi-icon ${data.kind}`}>{data.kind.slice(0, 3).toUpperCase()}</span>
-        <div className="plvp-pop-title">
-          <div className="plvp-pop-name" title={data.fileName}>{data.fileName}</div>
-          <div className="plvp-pop-sub">{data.meta}</div>
-        </div>
-        <button type="button" className="plvp-pop-close"
-          title={t('关闭', 'Close')} aria-label={t('关闭', 'Close')}
-          onClick={onClose}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
-
-      <div className="plvp-pop-body">
-        {data.preview.type === 'table' ? (
-          <table className="plvp-pop-table">
-            <thead>
-              <tr>{data.preview.headers.map((h, i) => <th key={i}>{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {data.preview.rows.map((row, ri) => (
-                <tr key={ri}>{row.map((cell, ci) => <td key={ci}>{cell}</td>)}</tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="plvp-pop-text">
-            {data.preview.lines.map((line, i) => <div key={i}>{line || '\u00A0'}</div>)}
-          </div>
-        )}
-      </div>
-
-      <div className="plvp-pop-foot">
-        <span className="plvp-pop-note" title={data.preview.note}>{data.preview.note}</span>
-        <button type="button" className="plvp-pop-open"
-          onClick={() => openFile(data.fileName, data.fileSize)}>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          {t('打开文件', 'Open')}
-        </button>
-      </div>
-    </div>
-  )
 
   // ======================== RENDER ========================
   return (
@@ -866,6 +843,14 @@ function PBCManager() {
                   </div>
                 )
               })}
+              {/* 未分类文件：已收到但尚未匹配到 PBC 条目的文件数 */}
+              <div className="psc-item" style={{ borderTopColor: '#0EA5E9' }}
+                title={t(`${poolIds.length} 个文件待分拣`, `${poolIds.length} files pending triage`)}>
+                <span className="psc-num" style={{ color: poolIds.length > 0 ? '#0EA5E9' : '#cbd5e1' }}>
+                  {poolIds.length}
+                </span>
+                <span className="psc-lbl">{t('未分类文件', 'Unfiled')}</span>
+              </div>
             </div>
             <div className="psc-stack">
               {PBC_STATUS_FLOW.map(s => (
@@ -1121,7 +1106,7 @@ function PBCManager() {
 
       {/* ===== VIEW: List View (category filter on top, full-width table) ===== */}
       {viewMode === 'list' && (
-        <div className={`pbc-list-view animate-fade-in ${pickedPoolId ? 'is-picking' : ''}`}>
+        <div className="pbc-list-view animate-fade-in">
           {/* Category filter bar: horizontal clickable labels */}
           <div className="plv-filter-bar">
             <div className="plvf-head">
@@ -1151,24 +1136,28 @@ function PBCManager() {
 
           <div className="plv-split">
             {/* ===== 左：PBC 管理清单（树形） ===== */}
-            <div className="plv-left" ref={leftPanelRef}>
-              {pickedPoolId && (
-                <div className="plv-pick-banner">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                  <span>{t(`已选中「${POOL_FILE_MAP[pickedPoolId]?.fileName}」：点击左侧条目完成匹配，或直接拖拽`,
-                           `Selected "${POOL_FILE_MAP[pickedPoolId]?.fileName}" — click a checklist row to match`)}</span>
-                  <button onClick={() => setPickedPoolId(null)}>{t('取消', 'Cancel')}</button>
-                </div>
-              )}
-
+            <div className="plv-left">
               <div className="plv-panel-head">
                 <div className="plvp-title">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00338D" strokeWidth="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
                   <span>{t('PBC 清单', 'PBC Checklist')}</span>
                   <span className="plvp-badge">{matchedItemCount}/{filteredItems.length} {t('已匹配', 'matched')}</span>
                 </div>
-                <input className="plvp-search" value={filterSearch} onChange={e => setFilterSearch(e.target.value)}
-                  placeholder={t('搜索资料类别...', 'Search checklist...')} />
+                <div className="plvp-actions">
+                  <div className="plvp-search-wrap">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input className="plvp-search" value={filterSearch} onChange={e => setFilterSearch(e.target.value)}
+                      placeholder={t('搜索资料类别...', 'Search checklist...')} />
+                  </div>
+                  <button className="plvp-sort-btn" onClick={openSorter}
+                    title={t('打开文件分拣窗口，将已收到的文件匹配到清单类型', 'Open file triage to match received files to checklist types')}>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 6h18" /><path d="M6 12h12" /><path d="M10 18h4" />
+                    </svg>
+                    {t('文件分拣中心', 'File Triage')}
+                    <span className="plvp-sort-count">{poolIds.length}</span>
+                  </button>
+                </div>
               </div>
 
               <main className="plv-main">
@@ -1178,22 +1167,109 @@ function PBCManager() {
                     onChange={toggleSelectAll} />
                   <span>{t('全选', 'Select All')}</span>
                 </label>
-                <span className="plv-table-info">
-                  {t(`${filteredItems.length} 条结果`, `${filteredItems.length} results`)}
-                </span>
+                <div className="plv-th-actions">
+                  {hasColFilters && (
+                    <button className="plv-clear-col" onClick={clearColFilters}
+                      title={t('清除表头筛选', 'Clear column filters')}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      {t('清除列筛选', 'Clear filters')}
+                    </button>
+                  )}
+                  <span className="plv-table-info">
+                    {t(`${filteredItems.length} 条结果`, `${filteredItems.length} results`)}
+                  </span>
+                </div>
               </div>
               <table className="plv-table">
                 <thead>
                   <tr>
                     <th className="plv-c-check"></th>
-                    <th className="plv-c-tree">{t('PBC 清单', 'PBC Checklist')}</th>
-                    <th className="plv-c-file">{t('匹配文件', 'Matched File')}</th>
-                    <th className="plv-c-assignee">{t('负责人', 'Assignee')}</th>
-                    <th className="plv-c-due">{t('截止日期', 'Due Date')}</th>
-                    <th className="plv-c-status">{t('状态', 'Status')}</th>
-                    <th className="plv-c-prio">{t('优先级', 'Priority')}</th>
-                    <th className="plv-c-dtype">{t('数据类型', 'Data Type')}</th>
-                    <th className="plv-c-pool">{t('File Pool', 'File Pool')}</th>
+                    <th className="plv-c-tree">
+                      <div className="plv-th-cell">
+                        <span className="plv-th-label">{t('PBC 清单', 'PBC Checklist')}</span>
+                        <input className="plv-col-input" value={colFilters.tree}
+                          onChange={e => setColFilters(f => ({ ...f, tree: e.target.value }))}
+                          onClick={e => e.stopPropagation()}
+                          placeholder={t('筛选', 'Filter')} />
+                      </div>
+                    </th>
+                    <th className="plv-c-file">
+                      <div className="plv-th-cell">
+                        <span className="plv-th-label">{t('匹配文件', 'Matched File')}</span>
+                        <select className="plv-col-select" value={colFilters.file}
+                          onChange={e => setColFilters(f => ({ ...f, file: e.target.value as ColFilters['file'] }))}>
+                          <option value="all">{t('全部', 'All')}</option>
+                          <option value="matched">{t('已匹配', 'Matched')}</option>
+                          <option value="pending">{t('待补充', 'Pending')}</option>
+                        </select>
+                      </div>
+                    </th>
+                    <th className="plv-c-assignee">
+                      <div className="plv-th-cell">
+                        <span className="plv-th-label">{t('负责人', 'Assignee')}</span>
+                        <select className="plv-col-select" value={colFilters.assignee}
+                          onChange={e => setColFilters(f => ({ ...f, assignee: e.target.value }))}>
+                          <option value="all">{t('全部', 'All')}</option>
+                          {colOptions.assignees.map(a => <option key={a} value={a}>{a}</option>)}
+                        </select>
+                      </div>
+                    </th>
+                    <th className="plv-c-due">
+                      <div className="plv-th-cell">
+                        <span className="plv-th-label">{t('截止日期', 'Due Date')}</span>
+                        <select className="plv-col-select" value={colFilters.due}
+                          onChange={e => setColFilters(f => ({ ...f, due: e.target.value }))}>
+                          <option value="all">{t('全部', 'All')}</option>
+                          {colOptions.dues.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                      </div>
+                    </th>
+                    <th className="plv-c-status">
+                      <div className="plv-th-cell">
+                        <span className="plv-th-label">{t('状态', 'Status')}</span>
+                        <select className="plv-col-select" value={colFilters.status}
+                          onChange={e => setColFilters(f => ({ ...f, status: e.target.value }))}>
+                          <option value="all">{t('全部', 'All')}</option>
+                          {PBC_STATUS_FLOW.map(s => (
+                            <option key={s.key} value={s.key}>{isZh ? s.zh : s.en}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </th>
+                    <th className="plv-c-prio">
+                      <div className="plv-th-cell">
+                        <span className="plv-th-label">{t('优先级', 'Priority')}</span>
+                        <select className="plv-col-select" value={colFilters.priority}
+                          onChange={e => setColFilters(f => ({ ...f, priority: e.target.value }))}>
+                          <option value="all">{t('全部', 'All')}</option>
+                          <option value="high">{t('高', 'High')}</option>
+                          <option value="medium">{t('中', 'Medium')}</option>
+                          <option value="low">{t('低', 'Low')}</option>
+                        </select>
+                      </div>
+                    </th>
+                    <th className="plv-c-dtype">
+                      <div className="plv-th-cell">
+                        <span className="plv-th-label">{t('数据类型', 'Data Type')}</span>
+                        <select className="plv-col-select" value={colFilters.dataType}
+                          onChange={e => setColFilters(f => ({ ...f, dataType: e.target.value }))}>
+                          <option value="all">{t('全部', 'All')}</option>
+                          <option value="structured">{t('结构化', 'Str')}</option>
+                          <option value="unstructured">{t('非结构化', 'Unstr')}</option>
+                        </select>
+                      </div>
+                    </th>
+                    <th className="plv-c-pool">
+                      <div className="plv-th-cell">
+                        <span className="plv-th-label">{t('File Pool', 'File Pool')}</span>
+                        <select className="plv-col-select" value={colFilters.pool}
+                          onChange={e => setColFilters(f => ({ ...f, pool: e.target.value as ColFilters['pool'] }))}>
+                          <option value="all">{t('全部', 'All')}</option>
+                          <option value="pushed">{t('已推送', 'Pushed')}</option>
+                          <option value="pending">{t('待推送', 'Pending')}</option>
+                        </select>
+                      </div>
+                    </th>
                     {/* 占位列：吸收表格富余宽度，避免其余列被撑宽 */}
                     <th className="plv-c-spacer" aria-hidden="true"></th>
                   </tr>
@@ -1248,32 +1324,16 @@ function PBCManager() {
                           <td className="plv-c-spacer" aria-hidden="true"></td>
                         </tr>
 
-                        {/* 条目（子级）行：可接收右侧文件池的拖拽匹配 */}
+                        {/* 条目（子级）行 */}
                         {!collapsed && items.map(item => {
                           const file = effFile(item)
                           const isSel = selectedIds.has(item.id)
                           const stt = effStatus(item)
-                          const isDrop = dragOverId === item.id
+                          const pbcMatchCount = filePbcCount(item)
                           return (
                             <tr key={item.id}
-                              className={`plv-row-item ${isSel ? 'row-selected' : ''} priority-${item.priority} ${flashId === item.id ? 'row-flash' : ''} ${isDrop ? 'plv-drop-active' : ''}`}
-                              onClick={() => {
-                                if (pickedPoolId) { assignFile(item.id, pickedPoolId); setPickedPoolId(null) }
-                                else toggleSelect(item.id)
-                              }}
-                              onDragOver={e => {
-                                if (!e.dataTransfer.types.includes('text/plain')) return
-                                e.preventDefault()
-                                if (dragOverId !== item.id) setDragOverId(item.id)
-                              }}
-                              onDragLeave={() => setDragOverId(cur => (cur === item.id ? null : cur))}
-                              onDrop={e => {
-                                const pid = e.dataTransfer.getData('text/plain') || draggingPoolId
-                                if (!pid) return
-                                e.preventDefault()
-                                assignFile(item.id, pid)
-                                setDragOverId(null); setDraggingPoolId(null)
-                              }}>
+                              className={`plv-row-item ${isSel ? 'row-selected' : ''} priority-${item.priority} ${flashId === item.id ? 'row-flash' : ''}`}
+                              onClick={() => toggleSelect(item.id)}>
                               <td>
                                 <input type="checkbox" checked={isSel}
                                   onChange={() => toggleSelect(item.id)}
@@ -1292,25 +1352,11 @@ function PBCManager() {
                               <td className="plv-c-file">
                                 {file ? (
                                   <div className="plv-file-cell">
-                                    <button
-                                      className={`plv-file-eye ${rowPreview?.itemId === item.id ? 'active' : ''}`}
-                                      title={`${t('预览文件内容', 'Preview file')}：${file.name}${file.size ? ` (${file.size})` : ''}`}
-                                      aria-label={`${t('预览文件内容', 'Preview file')}：${file.name}`}
-                                      onClick={e => openRowPreview(e, item.id)}
-                                    >
-                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                                        <circle cx="12" cy="12" r="3" />
-                                      </svg>
-                                    </button>
-                                    <span className="plv-file-name" title={file.name}
-                                      draggable={file.fromPool}
-                                      onDragStart={e => {
-                                        if (!file.fromPool) return
-                                        e.dataTransfer.setData('application/x-pbc-item', item.id)
-                                        e.dataTransfer.effectAllowed = 'move'
-                                      }}>
-                                      {file.name}
+                                    <span
+                                      className={`plv-pbc-count ${pbcMatchCount > 1 ? 'multi' : ''}`}
+                                      title={`${file.name}${file.size ? ` (${file.size})` : ''} · ${t(`已匹配 ${pbcMatchCount} 个 PBC 条目`, `matched to ${pbcMatchCount} PBC items`)}`}>
+                                      <b>{pbcMatchCount}</b>
+                                      <span>PBC</span>
                                     </span>
                                     {file.fromPool && (
                                       <button className="plv-file-unlink"
@@ -1371,103 +1417,8 @@ function PBCManager() {
                 </tbody>
               </table>
               </main>
-
-              {/* 已匹配文件预览浮层（浮于该行文件列右侧，用于快速识别文件） */}
-              {rowPreview && (() => {
-                const item = pbcItems.find(i => i.id === rowPreview.itemId)
-                const pv = item ? rowFilePreview(item) : null
-                if (!pv) return null
-                return renderPreviewCard(pv, () => setRowPreview(null), {
-                  className: 'plv-pop-row',
-                  style: { top: rowPreview.top, left: rowPreview.left },
-                })
-              })()}
             </div>
 
-            {/* ===== 右：未分类 PBC 文件池（拖拽来源） ===== */}
-            <aside className="plv-right" ref={rightPanelRef}>
-              <div className="plv-pool-card">
-                <div className="plv-pool-head">
-                  <div className="plvph-title">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00338D" strokeWidth="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>
-                    <span>{t('未分类文件', 'Unclassified Files')}</span>
-                    <span className="plvph-count">{pool.length}</span>
-                  </div>
-                  <div className="plvph-hint">
-                    {t('项目组已收到、但尚未匹配到类型的 PBC 文件。拖拽到左侧对应类型，或点击文件再点击条目完成匹配。',
-                       'Received PBC files not yet matched to a type. Drag onto a checklist row, or click a file then a row.')}
-                  </div>
-                </div>
-                <div className={`plv-pool ${poolDropActive ? 'drop-active' : ''}`}
-                  onScroll={() => setPreviewFileId(null)}
-                  onDragOver={e => {
-                    if (draggingPoolId) return
-                    if (!e.dataTransfer.types.includes('application/x-pbc-item')) return
-                    e.preventDefault()
-                    if (!poolDropActive) setPoolDropActive(true)
-                  }}
-                  onDragLeave={() => setPoolDropActive(false)}
-                  onDrop={e => {
-                    e.preventDefault(); setPoolDropActive(false)
-                    const itemId = e.dataTransfer.getData('application/x-pbc-item')
-                    if (itemId) unassignFile(itemId)
-                  }}>
-                  {pool.map(f => (
-                    <div key={f.id}
-                      className={`plv-pool-item ${draggingPoolId === f.id ? 'dragging' : ''} ${pickedPoolId === f.id ? 'picked' : ''}`}
-                      draggable
-                      onDragStart={e => {
-                        e.dataTransfer.setData('text/plain', f.id)
-                        e.dataTransfer.effectAllowed = 'move'
-                        setDraggingPoolId(f.id)
-                        setPickedPoolId(null)
-                        setPreviewFileId(null)
-                      }}
-                      onDragEnd={() => { setDraggingPoolId(null); setDragOverId(null) }}
-                      onClick={() => { setPreviewFileId(null); setPickedPoolId(cur => (cur === f.id ? null : f.id)) }}>
-                      <span className={`plvi-icon ${f.kind}`}>{f.kind.slice(0, 3).toUpperCase()}</span>
-                      <div className="plvi-main">
-                        <div className="plvi-name" title={f.fileName}>{f.fileName}</div>
-                        <div className="plvi-meta">{f.fileSize} · {f.source} · {f.receivedAt}</div>
-                      </div>
-                      <button type="button"
-                        className={`plvi-preview-btn ${previewFileId === f.id ? 'active' : ''}`}
-                        title={t('预览文件内容', 'Preview file')}
-                        aria-label={t('预览文件内容', 'Preview file')}
-                        onClick={e => openFilePreview(e, f)}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                          <circle cx="12" cy="12" r="3" />
-                        </svg>
-                      </button>
-                    </div>
-                  ))}
-                  {pool.length === 0 && (
-                    <div className="plv-pool-empty">
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.8"><polyline points="20 6 9 17 4 12"/></svg>
-                      <div>{t('未分类文件已全部匹配', 'All unclassified files matched')}</div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* 文件部分内容预览浮层（浮于文件条目左侧，用于快速识别文件） */}
-              {previewFileId && (() => {
-                const pf = POOL_FILE_MAP[previewFileId]
-                if (!pf) return null
-                return renderPreviewCard(
-                  {
-                    fileName: pf.fileName,
-                    fileSize: pf.fileSize,
-                    kind: pf.kind,
-                    meta: `${pf.fileSize} · ${pf.source} · ${pf.receivedAt}`,
-                    preview: pf.preview,
-                  },
-                  () => setPreviewFileId(null),
-                  { style: { top: previewTop } },
-                )
-              })()}
-            </aside>
           </div>
         </div>
       )}
@@ -1536,6 +1487,215 @@ function PBCManager() {
             })()}
           </div>
         </>
+      )}
+
+      {/* ===== 文件分拣窗口：上传文件 · PBC 清单 · 文件预览 ===== */}
+      {showSorter && (
+        <div className="pbc-sorter-overlay" onMouseDown={() => setShowSorter(false)}>
+          <div className="pbc-sorter" onMouseDown={e => e.stopPropagation()}>
+            {/* 窗口头 */}
+            <div className="psr-head">
+              <div className="psr-head-left">
+                <span className="psr-head-icon">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                    <path d="M8 13h8" />
+                  </svg>
+                </span>
+                <div>
+                  <h3>{t('文件分拣', 'File Triage')}</h3>
+                  <p>{t('将已收到的文件匹配到 PBC 清单类型：左侧选文件，中间点选条目，右侧确认内容',
+                       'Match received files to PBC checklist types: pick a file, choose a row, preview the content.')}</p>
+                </div>
+              </div>
+              <div className="psr-head-stats">
+                <span>{t(`已匹配 ${allMatchedCount}`, `${allMatchedCount} matched`)}</span>
+                <span>{t(`待分拣 ${poolIds.length}`, `${poolIds.length} pending`)}</span>
+              </div>
+              <button className="psr-close" onClick={() => setShowSorter(false)}
+                aria-label={t('关闭', 'Close')}>×</button>
+            </div>
+
+            <div className="psr-body">
+              {/* 左：上传文件列表 */}
+              <section className="psr-pane psr-files">
+                <header className="psr-pane-head">
+                  <span className="psr-pane-title">{t('上传文件列表', 'Received Files')}</span>
+                  <span className="psr-pane-count">{sorterFiles.length}</span>
+                </header>
+                <div className="psr-filters">
+                  <input className="psr-search" value={sorterFileQuery}
+                    onChange={e => setSorterFileQuery(e.target.value)}
+                    placeholder={t('搜索文件名...', 'Search file name...')} />
+                  <div className="psr-filter-row">
+                    <select value={sorterStatus} onChange={e => setSorterStatus(e.target.value as typeof sorterStatus)}>
+                      <option value="all">{t('全部状态', 'All status')}</option>
+                      <option value="pending">{t('待分拣', 'Pending')}</option>
+                      <option value="matched">{t('已匹配', 'Matched')}</option>
+                    </select>
+                    <select value={sorterKind} onChange={e => setSorterKind(e.target.value as typeof sorterKind)}>
+                      <option value="all">{t('全部类型', 'All types')}</option>
+                      <option value="xlsx">XLSX</option>
+                      <option value="pdf">PDF</option>
+                      <option value="docx">DOCX</option>
+                      <option value="csv">CSV</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="psr-file-list">
+                  {sorterFiles.map(f => {
+                    const matchedIds = fileMatchMap[f.id] || []
+                    const target = matchedIds.length ? pbcItems.find(i => i.id === matchedIds[0]) : undefined
+                    return (
+                      <button key={f.id}
+                        className={`psr-file ${sorterFileId === f.id ? 'active' : ''}`}
+                        onClick={() => setSorterFileId(f.id)}>
+                        <span className={`psr-file-ico ${f.kind}`}>{f.kind.slice(0, 3).toUpperCase()}</span>
+                        <span className="psr-file-main">
+                          <span className="psr-file-name" title={f.fileName}>{f.fileName}</span>
+                          <span className="psr-file-meta">{f.fileSize} · {f.source} · {f.receivedAt}</span>
+                          {target && (
+                            <span className="psr-file-target">
+                              → {resolveDesc(target.description, isZh)}
+                              {matchedIds.length > 1 && ` +${matchedIds.length - 1}`}
+                            </span>
+                          )}
+                        </span>
+                        <span className={`psr-file-tag ${target ? 'matched' : 'pending'}`}>
+                          {target ? t('已匹配', 'Matched') : t('待分拣', 'Pending')}
+                        </span>
+                      </button>
+                    )
+                  })}
+                  {sorterFiles.length === 0 && (
+                    <div className="psr-empty">{t('没有符合条件的文件', 'No files match the filters')}</div>
+                  )}
+                </div>
+              </section>
+
+              {/* 中：PBC 清单 */}
+              <section className="psr-pane psr-checklist">
+                <header className="psr-pane-head">
+                  <span className="psr-pane-title">{t('PBC 清单', 'PBC Checklist')}</span>
+                  <span className="psr-pane-count green">{allMatchedCount}/{pbcItems.length}</span>
+                </header>
+                <div className="psr-filters">
+                  <input className="psr-search" value={sorterCheckQuery}
+                    onChange={e => setSorterCheckQuery(e.target.value)}
+                    placeholder={t('搜索资料类别...', 'Search checklist...')} />
+                </div>
+                <div className="psr-tree">
+                  {sorterTree.map(({ cat, items }) => {
+                    const collapsed = sorterCollapsed.has(cat.key)
+                    const matched = items.filter(i => effFile(i)).length
+                    return (
+                      <div key={cat.key} className="psr-cat">
+                        <button className={`psr-cat-head ${collapsed ? 'collapsed' : ''}`}
+                          onClick={() => toggleSorterCat(cat.key)}>
+                          <span className="psr-caret">▾</span>
+                          <span className="psr-cat-icon">{cat.icon}</span>
+                          <span className="psr-cat-name">{isZh ? cat.zh : cat.en}</span>
+                          <span className={`psr-cat-count ${matched === items.length ? 'full' : ''}`}>
+                            {matched}/{items.length}
+                          </span>
+                        </button>
+                        {!collapsed && items.map(item => {
+                          const file = effFile(item)
+                          return (
+                            <button key={item.id}
+                              className={`psr-item ${file ? 'has-file' : ''} ${sorterMatchedItemIds.includes(item.id) ? 'is-target' : ''}`}
+                              onClick={() => matchSorterItem(item)}
+                              title={file ? `${t('已匹配', 'Matched')}：${file.name}` : t('点击匹配当前文件', 'Click to match selected file')}>
+                              <span className="psr-item-dot" />
+                              <span className="psr-item-name">{resolveDesc(item.description, isZh)}</span>
+                              <span className={`psr-item-ratio ${file ? 'full' : ''}`}>{file ? '1/1' : '0/1'}</span>
+                              <span className="psr-item-add">+</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
+                  {sorterTree.length === 0 && (
+                    <div className="psr-empty">{t('没有符合条件的条目', 'No checklist items match')}</div>
+                  )}
+                </div>
+              </section>
+
+              {/* 右：文件内容预览 */}
+              <section className="psr-pane psr-preview">
+                {sorterFile ? (
+                  <>
+                    <header className="psr-doc-head">
+                      <div className="psr-doc-title">
+                        <span className={`psr-file-ico ${sorterFile.kind}`}>{sorterFile.kind.slice(0, 3).toUpperCase()}</span>
+                        <span title={sorterFile.fileName}>{sorterFile.fileName}</span>
+                      </div>
+                      <button className="psr-kcc-btn">{t('抽取 KCC 字段', 'Extract KCC')}</button>
+                    </header>
+                    <div className="psr-doc-bar">
+                      <span className="psr-ai-chip">
+                        {t('AI 建议', 'AI hint')} · {t('所属科目', 'Category')}：
+                        {sorterSuggest ? (isZh ? sorterSuggest.zh : sorterSuggest.en) : '—'}
+                      </span>
+                      <span className="psr-kw">
+                        {t('关键词', 'Keywords')}：{sorterKeywords.join(' / ') || '—'}
+                      </span>
+                      <span className="psr-zoom">100%</span>
+                    </div>
+                    {sorterMatchedItem && (
+                      <div className="psr-match-banner">
+                        <span>
+                          {sorterMatchedItemIds.length > 1
+                            ? t(`已匹配 ${sorterMatchedItemIds.length} 个条目，含「${resolveDesc(sorterMatchedItem.description, isZh)}」`,
+                                `Matched ${sorterMatchedItemIds.length} items incl. "${resolveDesc(sorterMatchedItem.description, isZh)}"`)
+                            : t(`已匹配至「${resolveDesc(sorterMatchedItem.description, isZh)}」`,
+                                `Matched to "${resolveDesc(sorterMatchedItem.description, isZh)}"`)}
+                        </span>
+                        <button onClick={() => unassignFileFromAll(sorterFile.id)}>{t('取消匹配', 'Unmatch')}</button>
+                      </div>
+                    )}
+                    <div className="psr-doc-canvas">
+                      <div className="psr-doc-paper">
+                        <div className="psr-doc-page">{t('第 1 页', 'Page 1')}</div>
+                        {sorterFile.preview.type === 'table' ? (
+                          <table className="psr-doc-table">
+                            <thead>
+                              <tr>{sorterFile.preview.headers.map((h, i) => <th key={i}>{h}</th>)}</tr>
+                            </thead>
+                            <tbody>
+                              {sorterFile.preview.rows.map((row, ri) => (
+                                <tr key={ri}>{row.map((cell, ci) => <td key={ci}>{cell}</td>)}</tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        ) : (
+                          <div className="psr-doc-text">
+                            {sorterFile.preview.lines.map((line, i) => <div key={i}>{line || '\u00A0'}</div>)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="psr-doc-foot">
+                      {t('预览为文件识别结果，如匹配有误请点击中间清单条目重新指定',
+                         'Preview only — click a checklist row to re-assign.')}
+                    </div>
+                  </>
+                ) : (
+                  <div className="psr-empty big">{t('选择左侧文件以查看预览', 'Select a file to preview')}</div>
+                )}
+              </section>
+            </div>
+
+            <div className="psr-foot">
+              <span className="psr-foot-hint">
+                {t('操作顺序：左侧选文件 → 中间点选匹配条目 → 自动进入下一个待分拣文件',
+                   'Pick a file → click the matching row → moves on to the next pending file.')}
+              </span>
+              <button className="psr-btn-primary" onClick={() => setShowSorter(false)}>{t('完成', 'Done')}</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 匹配结果提示 */}
