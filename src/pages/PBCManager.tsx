@@ -356,7 +356,6 @@ function PBCManager() {
   const [sorterFileId, setSorterFileId] = useState<string | null>(null)
   const [sorterFileQuery, setSorterFileQuery] = useState('')
   const [sorterCheckQuery, setSorterCheckQuery] = useState('')
-  const [sorterStatus, setSorterStatus] = useState<'all' | 'pending'>('all')
   const [sorterKind, setSorterKind] = useState<'all' | PoolFile['kind']>('all')
   const [sorterCollapsed, setSorterCollapsed] = useState<Set<string>>(new Set())
   /** 分拣窗口：正在拖拽的文件 / 当前拖入高亮的条目 */
@@ -655,7 +654,6 @@ function PBCManager() {
     setSorterFileId(poolIds[0] || UNCLASSIFIED_FILES[0]?.id || null)
     setSorterFileQuery('')
     setSorterCheckQuery('')
-    setSorterStatus('all')
     setSorterKind('all')
     setShowSorter(true)
   }
@@ -1567,10 +1565,6 @@ function PBCManager() {
                     onChange={e => setSorterFileQuery(e.target.value)}
                     placeholder={t('搜索文件名...', 'Search file name...')} />
                   <div className="psr-filter-row">
-                    <select value={sorterStatus} onChange={e => setSorterStatus(e.target.value as typeof sorterStatus)}>
-                      <option value="all">{t('全部状态', 'All status')}</option>
-                      <option value="pending">{t('待分拣', 'Pending')}</option>
-                    </select>
                     <select value={sorterKind} onChange={e => setSorterKind(e.target.value as typeof sorterKind)}>
                       <option value="all">{t('全部类型', 'All types')}</option>
                       <option value="xlsx">XLSX</option>
@@ -1607,7 +1601,6 @@ function PBCManager() {
                         {/* 文件来源列：KCC / cnDoc / Manual */}
                         <span className={`psr-file-source ${f.source.toLowerCase()}`}
                           title={t('文件来源', 'File source')}>{f.source}</span>
-                        <span className="psr-file-tag pending">{t('待分拣', 'Pending')}</span>
                       </button>
                     ))}
                   {sorterFiles.length === 0 && (
