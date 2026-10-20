@@ -128,13 +128,16 @@ const EMPTY_COL_FILTERS: ColFilters = {
   pool: 'all',
 }
 
+/** 文件来源渠道：KCC 同步 / cnDoc 同步 / 手工上传 */
+type FileSource = 'KCC' | 'cnDoc' | 'Manual'
+
 interface PoolFile {
   id: string
   fileName: string
   fileSize: string
   kind: 'xlsx' | 'pdf' | 'docx' | 'csv'
   /** 来源渠道 */
-  source: string
+  source: FileSource
   receivedAt: string
   /** 用于快速识别文件的部分内容预览 */
   preview: PoolPreview
@@ -142,7 +145,7 @@ interface PoolFile {
 
 const UNCLASSIFIED_FILES: PoolFile[] = [
   {
-    id: 'uf-01', fileName: '2026Q2_销售明细表.xlsx', fileSize: '968KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-10',
+    id: 'uf-01', fileName: '2026Q2_销售明细表.xlsx', fileSize: '968KB', kind: 'xlsx', source: 'KCC', receivedAt: '2026-07-10',
     preview: {
       type: 'table',
       headers: ['日期', '客户', '产品', '数量', '金额(元)'],
@@ -157,7 +160,7 @@ const UNCLASSIFIED_FILES: PoolFile[] = [
     },
   },
   {
-    id: 'uf-02', fileName: '董事会决议扫描件_20260709.pdf', fileSize: '1.2MB', kind: 'pdf', source: '共享盘', receivedAt: '2026-07-09',
+    id: 'uf-02', fileName: '董事会决议扫描件_20260709.pdf', fileSize: '1.2MB', kind: 'pdf', source: 'cnDoc', receivedAt: '2026-07-09',
     preview: {
       type: 'text',
       lines: [
@@ -175,7 +178,7 @@ const UNCLASSIFIED_FILES: PoolFile[] = [
     },
   },
   {
-    id: 'uf-03', fileName: '应收账款账龄分析_20260630.xlsx', fileSize: '642KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-08',
+    id: 'uf-03', fileName: '应收账款账龄分析_20260630.xlsx', fileSize: '642KB', kind: 'xlsx', source: 'KCC', receivedAt: '2026-07-08',
     preview: {
       type: 'table',
       headers: ['客户', '1年以内', '1-2年', '2年以上', '合计'],
@@ -190,7 +193,7 @@ const UNCLASSIFIED_FILES: PoolFile[] = [
     },
   },
   {
-    id: 'uf-04', fileName: '银行对账单_招商银行_202606.pdf', fileSize: '2.1MB', kind: 'pdf', source: '共享盘', receivedAt: '2026-07-08',
+    id: 'uf-04', fileName: '银行对账单_招商银行_202606.pdf', fileSize: '2.1MB', kind: 'pdf', source: 'cnDoc', receivedAt: '2026-07-08',
     preview: {
       type: 'table',
       headers: ['日期', '摘要', '借方', '贷方', '余额'],
@@ -205,7 +208,7 @@ const UNCLASSIFIED_FILES: PoolFile[] = [
     },
   },
   {
-    id: 'uf-05', fileName: '存货盘点表_20260630.xlsx', fileSize: '418KB', kind: 'xlsx', source: '现场提供', receivedAt: '2026-07-07',
+    id: 'uf-05', fileName: '存货盘点表_20260630.xlsx', fileSize: '418KB', kind: 'xlsx', source: 'Manual', receivedAt: '2026-07-07',
     preview: {
       type: 'table',
       headers: ['存货编码', '存货名称', '账面数量', '实盘数量', '差异'],
@@ -219,7 +222,7 @@ const UNCLASSIFIED_FILES: PoolFile[] = [
     },
   },
   {
-    id: 'uf-06', fileName: '薪资汇总表_202606.xlsx', fileSize: '306KB', kind: 'xlsx', source: '客户邮件', receivedAt: '2026-07-07',
+    id: 'uf-06', fileName: '薪资汇总表_202606.xlsx', fileSize: '306KB', kind: 'xlsx', source: 'KCC', receivedAt: '2026-07-07',
     preview: {
       type: 'table',
       headers: ['部门', '人数', '应发合计', '社保公积金', '个人所得税', '实发合计'],
@@ -233,7 +236,7 @@ const UNCLASSIFIED_FILES: PoolFile[] = [
     },
   },
   {
-    id: 'uf-07', fileName: '固定资产台账_202606.xlsx', fileSize: '1.5MB', kind: 'xlsx', source: '共享盘', receivedAt: '2026-07-06',
+    id: 'uf-07', fileName: '固定资产台账_202606.xlsx', fileSize: '1.5MB', kind: 'xlsx', source: 'cnDoc', receivedAt: '2026-07-06',
     preview: {
       type: 'table',
       headers: ['资产编号', '资产名称', '类别', '原值', '累计折旧', '净值'],
@@ -247,7 +250,7 @@ const UNCLASSIFIED_FILES: PoolFile[] = [
     },
   },
   {
-    id: 'uf-08', fileName: '增值税申报表_202606.pdf', fileSize: '764KB', kind: 'pdf', source: '客户邮件', receivedAt: '2026-07-06',
+    id: 'uf-08', fileName: '增值税申报表_202606.pdf', fileSize: '764KB', kind: 'pdf', source: 'KCC', receivedAt: '2026-07-06',
     preview: {
       type: 'table',
       headers: ['项目', '本期数', '本年累计'],
@@ -261,7 +264,7 @@ const UNCLASSIFIED_FILES: PoolFile[] = [
     },
   },
   {
-    id: 'uf-09', fileName: '采购订单明细_2026H1.xlsx', fileSize: '880KB', kind: 'xlsx', source: '共享盘', receivedAt: '2026-07-05',
+    id: 'uf-09', fileName: '采购订单明细_2026H1.xlsx', fileSize: '880KB', kind: 'xlsx', source: 'cnDoc', receivedAt: '2026-07-05',
     preview: {
       type: 'table',
       headers: ['订单号', '供应商', '物料', '数量', '含税金额'],
@@ -275,7 +278,7 @@ const UNCLASSIFIED_FILES: PoolFile[] = [
     },
   },
   {
-    id: 'uf-10', fileName: '租赁合同_总部办公_扫描.pdf', fileSize: '3.4MB', kind: 'pdf', source: '现场提供', receivedAt: '2026-07-04',
+    id: 'uf-10', fileName: '租赁合同_总部办公_扫描.pdf', fileSize: '3.4MB', kind: 'pdf', source: 'Manual', receivedAt: '2026-07-04',
     preview: {
       type: 'text',
       lines: [
@@ -1599,8 +1602,11 @@ function PBCManager() {
                         <span className={`psr-file-ico ${f.kind}`}>{f.kind.slice(0, 3).toUpperCase()}</span>
                         <span className="psr-file-main">
                           <span className="psr-file-name" title={f.fileName}>{f.fileName}</span>
-                          <span className="psr-file-meta">{f.fileSize} · {f.source} · {f.receivedAt}</span>
+                          <span className="psr-file-meta">{f.fileSize} · {f.receivedAt}</span>
                         </span>
+                        {/* 文件来源列：KCC / cnDoc / Manual */}
+                        <span className={`psr-file-source ${f.source.toLowerCase()}`}
+                          title={t('文件来源', 'File source')}>{f.source}</span>
                         <span className="psr-file-tag pending">{t('待分拣', 'Pending')}</span>
                       </button>
                     ))}
