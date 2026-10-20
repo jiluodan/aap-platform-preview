@@ -2068,9 +2068,10 @@
   background: #f1f5f9;
   overflow: hidden;
 }
-/* 条内分组：宽度按类目规模，内部再按已接收 / 未接收分段 */
+/* 满宽进度条：内部按「已接收 : 未接收」条目数分段（如 4:2 = 绿 2/3 + 灰 1/3） */
 .pcat-bar-group {
   display: flex;
+  width: 100%;
   height: 100%;
   border-radius: 3px;
   overflow: hidden;
@@ -2080,7 +2081,7 @@
   transition: flex-grow 0.5s ease;
 }
 .pcat-bar-fill.received { background: #059669; }
-.pcat-bar-fill.not-received { background: #f59e0b; }
+.pcat-bar-fill.not-received { background: #cbd5e1; }
 /* 图例 + 文件合计 */
 .pcat-foot {
   display: flex;
@@ -2105,7 +2106,7 @@
   flex: 0 0 auto;
 }
 .pcat-legend i.received { background: #059669; }
-.pcat-legend i.not-received { background: #f59e0b; }
+.pcat-legend i.not-received { background: #cbd5e1; }
 .pcat-total {
   margin-left: auto;
   font-weight: 700;

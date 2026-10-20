@@ -572,8 +572,6 @@ function PBCManager() {
       // 完成率 = 已接收到的 PBC 条目 / 全部 PBC 条目
       completionRate: Math.round((stats.received / stats.total) * 100),
       byCategory,
-      // 条形长度按最大类目的条目数归一化，条内再按已接收 / 未接收分段
-      maxCategoryCount: Math.max(1, ...byCategory.map(c => c.total)),
       // 类目文件合计（= 下方 checklist 中已接收文件数之和）
       totalFiles: byCategory.reduce((n, c) => n + c.fileCount, 0),
     }
@@ -904,8 +902,8 @@ function PBCManager() {
                   <span className="pcat-dot" style={{ background: cat.color }} />
                   <span className="pcat-name">{cat.label}</span>
                   <div className="pcat-bar-track">
-                    <div className="pcat-bar-group"
-                      style={{ width: `${(cat.total / chartData.maxCategoryCount) * 100}%` }}>
+                    {/* 满宽进度条：按「已接收条目 : 未接收条目」分段，直观呈现 x/y 的比例 */}
+                    <div className="pcat-bar-group">
                       {cat.received > 0 && <span className="pcat-bar-fill received" style={{ flexGrow: cat.received }} />}
                       {cat.notReceived > 0 && <span className="pcat-bar-fill not-received" style={{ flexGrow: cat.notReceived }} />}
                     </div>
